@@ -4,6 +4,8 @@ import { DatabaseManager } from './DatabaseManager';
 import { CosmeticManager } from '../cosmetics/CosmeticManager';
 import { AdminManager } from './AdminManager';
 import { CommandManager } from './CommandManager';
+import { PartyActions } from '../actions/PartyActions';
+import { SocialActions } from '../actions/SocialActions';
 
 export class BotManager {
     private bots: Map<string, any> = new Map();
@@ -12,18 +14,26 @@ export class BotManager {
     private sentMessageIds: Map<string, Set<string>> = new Map(); 
     private adminManager: AdminManager;
     private commandManager: CommandManager;
+    
+    // Actions
+    private partyActions: PartyActions;
+    private socialActions: SocialActions;
 
     constructor(dbManager: DatabaseManager, adminManager?: AdminManager) {
         this.dbManager = dbManager;
         this.adminManager = adminManager || new AdminManager();
         this.commandManager = new CommandManager();
+        
+        // Instantiate Actions
+        this.partyActions = new PartyActions();
+        this.socialActions = new SocialActions();
     }
 
     async launchBot(account: BotAccount): Promise<void> {
         const identifier = account.pseudo || account.email;
 
         if (this.bots.has(account.email)) {
-            console.log(`[${identifier}] ⚠️  Bot déjà lancé`);
+             // console.log(`[${identifier}] ⚠️  Bot déjà lancé`);
             return;
         }
 
@@ -150,7 +160,7 @@ export class BotManager {
         const connectedBots = this.getActiveBots().filter(b => b.isConnected && b.client);
 
         if (connectedBots.length === 0) {
-            console.error('[BotManager] No connected bots available');
+             // console.error('[BotManager] No connected bots available');
             return 'ERROR';
         }
 
@@ -188,43 +198,30 @@ export class BotManager {
             console.error(`[BotManager] Bot ${targetName} not found or offline.`);
             return;
         }
-
-        const party = botInstance.client.party;
-        if (!party) return; 
+        
+        const client = botInstance.client;
+        let result = '';
 
         try {
+            // REFACTORED: Use shared Actions classes
             switch (action) {
                 case 'leave':
-                    await party.leave();
-                    console.log(`[${targetName}] 👋 Left Party`);
+                    result = await this.partyActions.leaveParty(client);
                     break;
                 case 'kick':
-                    const memberToKick = party.members.find((m: any) => m.displayName === data);
-                    if (memberToKick) {
-                         await memberToKick.kick();
-                         console.log(`[${targetName}] 👢 Kicked ${data}`);
-                    }
+                    result = await this.partyActions.kickMember(client, data);
                     break;
                 case 'promote':
-                     const memberToPromote = party.members.find((m: any) => m.displayName === data);
-                     if (memberToPromote) {
-                         await memberToPromote.promote();
-                         console.log(`[${targetName}] 👑 Promoted ${data}`);
-                     }
+                    result = await this.partyActions.promoteMember(client, data);
                     break;
                 case 'privacy':
-                    const privacyMap: any = {
-                        'public': { privacy: 'Public' },
-                        'private': { privacy: 'Private' },
-                        'friends': { privacy: 'Friends' }
-                    };
-                    if (privacyMap[data]) await party.setPrivacy(privacyMap[data].privacy);
+                    result = await this.partyActions.setPrivacy(client, data);
                     break;
                 case 'add':
-                    await botInstance.client.friend.add(data);
-                    console.log(`[${targetName}] ➕ Manual Add ${data}`);
+                    result = await this.socialActions.addFriend(client, data);
                     break;
             }
+            console.log(`[${targetName}] ${result}`);
         } catch (e: any) {
             console.error(`[${targetName}] ❌ Action ${action} failed:`, e.message);
         }

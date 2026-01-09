@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  website:
+    build: ../lobbybot2.0-website
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+
+  manager:
+    build: .
+    environment:
+      - DISCORD_TOKEN=${DISCORD_TOKEN}
+      - DASHBOARD_URL=http://website:3000
+    volumes:
+      - ./accounts.csv:/app/accounts.csv
+    depends_on:
+      - website

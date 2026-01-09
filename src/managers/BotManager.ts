@@ -185,4 +185,59 @@ export class BotManager {
             return 'ERROR';
         }
     }
+
+    /**
+     * Executes a specific action on a targeted bot
+     */
+    async executeAction(targetName: string, action: string, data: any): Promise<void> {
+        console.log(`[BotManager] Executing ${action} on ${targetName}`);
+        
+        // Find bot by pseudo (display name)
+        const botInstance = this.getActiveBots().find(b => b.account.pseudo === targetName);
+
+        if (!botInstance || !botInstance.isConnected) {
+            console.error(`[BotManager] Bot ${targetName} not found or offline.`);
+            return;
+        }
+
+        const party = botInstance.client.party;
+
+        try {
+            switch (action) {
+                case 'leave':
+                    await party.leave();
+                    console.log(`[${targetName}] �� Left Party`);
+                    break;
+                case 'kick':
+                    const memberToKick = party.members.find((m: any) => m.displayName === data);
+                    if (memberToKick) {
+                         await memberToKick.kick();
+                         console.log(`[${targetName}] 👢 Kicked ${data}`);
+                    }
+                    break;
+                case 'promote':
+                     const memberToPromote = party.members.find((m: any) => m.displayName === data);
+                     if (memberToPromote) {
+                         await memberToPromote.promote();
+                         console.log(`[${targetName}] 👑 Promoted ${data}`);
+                     }
+                    break;
+                case 'privacy':
+                    // data = public, private, friends
+                    const privacyMap: any = {
+                        'public': { privacy: 'Public' },
+                        'private': { privacy: 'Private' },
+                        'friends': { privacy: 'Friends' }
+                    };
+                    if (privacyMap[data]) await party.setPrivacy(privacyMap[data].privacy);
+                    break;
+                case 'add':
+                    await botInstance.client.friend.add(data);
+                    console.log(`[${targetName}] ➕ Manual Add ${data}`);
+                    break;
+            }
+        } catch (e: any) {
+            console.error(`[${targetName}] ❌ Action ${action} failed:`, e.message);
+        }
+    }
 }

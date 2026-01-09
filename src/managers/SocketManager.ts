@@ -28,8 +28,14 @@ export class SocketManager {
         });
         
         this.socket.on('cmd:manager:add', async (data: { target: string, requester?: string }) => {
-            console.log(`📥 Dashboard requested add friend: ${data.target}`);
-            const success = await this.botManager.addFriendOnAvailableBot(data.target);
+           console.log(`📥 Dashboard requested add friend: ${data.target}`);
+           const success = await this.botManager.addFriendOnAvailableBot(data.target);
+        });
+
+        // Handle Targeted Actions (Click on a specific bot in dashboard)
+        this.socket.on('cmd:manager:action', async (data: { target: string, action: string, data?: any }) => {
+            console.log(`📥 Action received: ${data.action} on ${data.target}`);
+            await this.botManager.executeAction(data.target, data.action, data.data);
         });
     }
 
@@ -38,7 +44,8 @@ export class SocketManager {
         const botData = bots.map(b => ({
             name: b.account.pseudo,
             friends: (b.client && b.client.friends) ? b.client.friends.size : 0,
-            isOnline: b.isConnected
+            isOnline: b.isConnected,
+            ping: b.client && b.client.lastXmppMessage ? (Date.now() - b.client.lastXmppMessage) : 0
         }));
 
         this.socket.emit('manager:login', {

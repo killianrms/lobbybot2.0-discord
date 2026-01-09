@@ -41,12 +41,14 @@ export class DiscordManager {
 
                 message.channel.send(`🔄 Traitement de l'ajout pour **${target}**...`);
                 
-                const success = await this.botManager.addFriendOnAvailableBot(target);
+                const result = await this.botManager.addFriendOnAvailableBot(target);
                 
-                if (success) {
+                if (result === 'SUCCESS') {
                     message.reply(`✅ Demande d'ami envoyée à **${target}** !`);
+                } else if (result === 'FULL') {
+                    message.reply(`⚠️ Tous les bots sont pleins (+900 amis). Merci de demander à <@335755692134891520> d'ajouter des bots !`);
                 } else {
-                    message.reply(`❌ Impossible d'ajouter **${target}**. Aucun bot disponible ou erreur.`);
+                    message.reply(`❌ Erreur technique. Impossible d'ajouter **${target}**. (Aucun bot connecté ?)`);
                 }
             }
         });

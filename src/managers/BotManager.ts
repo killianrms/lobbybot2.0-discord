@@ -1,20 +1,20 @@
 import {Client, SendMessageError} from 'fnbr';
 import { BotAccount, DeviceAuth } from '../types';
-import { CSVManager } from './CSVManager';
+import { DatabaseManager } from './DatabaseManager';
 import { CosmeticManager } from '../cosmetics/CosmeticManager';
 import { AdminManager } from './AdminManager';
 import { CommandManager } from './CommandManager';
 
 export class BotManager {
     private bots: Map<string, any> = new Map();
-    private csvManager: CSVManager;
+    private dbManager: DatabaseManager;
     private cosmeticManagers: Map<string, CosmeticManager> = new Map();
-    private sentMessageIds: Map<string, Set<string>> = new Map(); // Map<botEmail, Set<messageId>>
+    private sentMessageIds: Map<string, Set<string>> = new Map(); 
     private adminManager: AdminManager;
     private commandManager: CommandManager;
 
-    constructor(csvManager: CSVManager, adminManager?: AdminManager) {
-        this.csvManager = csvManager;
+    constructor(dbManager: DatabaseManager, adminManager?: AdminManager) {
+        this.dbManager = dbManager;
         this.adminManager = adminManager || new AdminManager();
         this.commandManager = new CommandManager();
     }
@@ -29,7 +29,6 @@ export class BotManager {
 
         if (!account.deviceAuth) {
             console.error(`[${identifier}] ❌ Pas de device auth trouvé`);
-            console.error(`[${identifier}] 💡 Ajoutez les colonnes device_id, account_id et secret dans le CSV`);
             return;
         }
 
@@ -44,9 +43,7 @@ export class BotManager {
                 connectToSTOMP: true,
                 connectToXMPP: true,
                 debug: (msg) => {
-                    if (msg.includes('STOMP') || msg.includes('chat') || msg.includes('XMPP')) {
-                        // console.log(`[${identifier}] 🔍`, msg);
-                    }
+                    // console.log(msg);
                 }
             });
 
@@ -76,7 +73,6 @@ export class BotManager {
 
          (bot as any).on('friend:request', async (pendingFriend: any) => {
             try {
-                // AUTO ACCEPT FRIEND REQUEST
                 await pendingFriend.accept();
                 console.log(`[${identifier}] 🤝 Demande d'ami acceptée de: ${pendingFriend.displayName}`);
             } catch (error: any) {
@@ -85,16 +81,11 @@ export class BotManager {
         });
         
         (bot as any).on('party:member:joined', async (member: any) => {
-             // AUTO ADD FRIEND ON JOIN
             if (member.id === bot.user?.self?.id) return;
             try {
-                // Check if already friend, if not add
-                // Note: fnbr might not expose friends list immediately or fully sync.
-                // Safest to just try add or check if possible.
                 await member.addFriend();
                  console.log(`[${identifier}] ➕ Demande d'ami envoyée à ${member.displayName}`);
             } catch (e) {
-                // Ignore "already friends" errors
             }
         });
 
@@ -122,8 +113,9 @@ export class BotManager {
     }
 
     async launchAllBots(delayBetweenBots: number = 3000): Promise<void> {
-        const accounts = await this.csvManager.readAccounts();
-        console.log(`📋 ${accounts.length} compte(s) trouvé(s)\n`);
+        // READ FROM DB (Async)
+        const accounts = await this.dbManager.getAllBots();
+        console.log(`📋 ${accounts.length} compte(s) trouvé(s) en Base de Données\n`);
 
         for (let i = 0; i < accounts.length; i++) {
             await this.launchBot(accounts[i]);
@@ -152,15 +144,9 @@ export class BotManager {
         return this.bots.get(email);
     }
     
-    /**
-     * Tries to add a friend on the first available connected bot with < 900 friends.
-     * @param targetUsername The Epic username to add
-     * @returns 'SUCCESS', 'ERROR', or 'FULL'
-     */
     async addFriendOnAvailableBot(targetUsername: string): Promise<'SUCCESS' | 'ERROR' | 'FULL'> {
         console.log(`[BotManager] Trying to add friend: ${targetUsername}`);
         
-        // Find connected bots
         const connectedBots = this.getActiveBots().filter(b => b.isConnected && b.client);
 
         if (connectedBots.length === 0) {
@@ -168,8 +154,8 @@ export class BotManager {
             return 'ERROR';
         }
 
-        // Filter bots with < 900 friends
         const availableBots = connectedBots.filter(b => {
+             // Safe Check optional chaining
             const friendCount = b.client.friends ? b.client.friends.size : 0;
             return friendCount < 900; 
         });
@@ -179,7 +165,6 @@ export class BotManager {
             return 'FULL';
         }
 
-        // Pick the first one
         const botInstance = availableBots[0];
         const identifier = botInstance.account.pseudo;
 
@@ -194,13 +179,9 @@ export class BotManager {
         }
     }
 
-    /**
-     * Executes a specific action on a targeted bot
-     */
     async executeAction(targetName: string, action: string, data: any): Promise<void> {
         console.log(`[BotManager] Executing ${action} on ${targetName}`);
         
-        // Find bot by pseudo (display name)
         const botInstance = this.getActiveBots().find(b => b.account.pseudo === targetName);
 
         if (!botInstance || !botInstance.isConnected) {
@@ -209,6 +190,7 @@ export class BotManager {
         }
 
         const party = botInstance.client.party;
+        if (!party) return; 
 
         try {
             switch (action) {
@@ -231,7 +213,6 @@ export class BotManager {
                      }
                     break;
                 case 'privacy':
-                    // data = public, private, friends
                     const privacyMap: any = {
                         'public': { privacy: 'Public' },
                         'private': { privacy: 'Private' },

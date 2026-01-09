@@ -1,91 +1,48 @@
-# Fortnite Multi-Bot Manager
+# 🎮 LobbyBot 2.0 - Discord Manager
 
-Gestionnaire de bots Fortnite multi-comptes avec gestion automatique des device auth.
+Le cœur du système de gestion de bots Fortnite. Ce projet permet de gérer des centaines de LobbyBots depuis une seule instance Node.js, connectée à une base de données et un dashboard web.
 
-## 🚀 Installation
+## 🚀 Fonctionnalités
 
-```bash
-npm install
-```
+*   **Multi-Comptes** : Gère illimité de bots simulanément.
+*   **Architecture Monolithique** : Un seul processus Node.js pour tous les bots.
+*   **Base de Données** : PostgreSQL pour stocker les comptes et les stats.
+*   **Dockerisé** : Déploiement facile avec `docker-compose`.
+*   **Intégration Discord** : Commandes slash (ex: `/add`) et chat.
+*   **Connexion Dashboard** : Envoie les statuts en temps réel au Dashboard Web.
 
-## 📝 Configuration
+## 🛠️ Installation & Démarrage (Docker)
 
-### 1. Générer un Device Auth
+C'est la méthode recommandée.
 
-Pour chaque nouveau compte, vous devez générer un device auth :
-
-```bash
-npm run generate-auth
-```
-
-Suivez les instructions affichées dans le terminal.
-
-### 2. Ajouter le compte au CSV
-
-Ajoutez la ligne dans `accounts.csv` avec le format :
-
-```csv
-pseudo,email,password,device_id,account_id,secret
-MonBot,email@example.com,password,device_id_xxx,account_id_xxx,secret_xxx
-```
-
-## 🎮 Lancer les bots
+1.  **Pré-requis** : Avoir Docker et Docker Compose installés.
+2.  **Configuration** :
+    *   Créez un fichier `.env` avec votre `DISCORD_TOKEN`.
+    *   (Optionnel) Placez votre `accounts.csv` à la racine pour l'import initial.
+3.  **Lancer** :
 
 ```bash
-npm start
+docker-compose up -d --build
 ```
 
-Ou en mode dev :
+Cela lancera :
+*   Le Manager
+*   Le Dashboard (port 3000)
+*   La Base de Données PostgreSQL
 
-```bash
-npm run dev
-```
+## 📂 Structure du Projet
 
-## 📊 Structure
+*   `src/managers/` : Logique de gestion (Bots, Database, Commandes).
+*   `src/actions/` : Logique des actions Fortnite (Skin, Party, Friends).
+*   `.env` : Variables d'environnement (Token Discord, DB creds).
+*   `accounts.csv` : Fichier d'import des comptes (Email, DeviceAuth).
 
-```
-src/
-├── index.ts              # Point d'entrée principal
-├── api.ts                # API pour gestion programmatique
-├── getDeviceAuth.ts      # Script pour générer device auth
-├── types/
-│   └── index.ts          # Types TypeScript
-└── managers/
-    ├── CSVManager.ts     # Gestion du CSV
-    └── BotManager.ts     # Gestion des bots
-```
+## 🤝 Commandes
 
-## ✨ Fonctionnalités
+*   **Chat** :
+    *   `!skin <nom>` : Change le skin du bot.
+    *   `!kick <pseudo>` : Exclut un joueur.
+    *   `!promote <pseudo>` : Promeut un joueur chef.
+*   **Discord** :
+    *   `/add <pseudo>` : Ajoute un ami via un bot disponible.
 
-- ✅ Multi-bots avec device auth
-- ✅ Auto-accept friends
-- ✅ Auto-accept party invites
-- ✅ Commandes de chat (ping, salut)
-- ✅ Logs détaillés par bot
-- ✅ API pour gestion programmatique
-
-## 🔒 Sécurité
-
-⚠️ `accounts.csv` contient des informations sensibles et est ignoré par git.
-
-## 📌 Commandes npm
-
-- `npm run build` - Compile le TypeScript
-- `npm start` - Compile et lance les bots
-- `npm run dev` - Mode développement (compile + lance)
-- `npm run generate-auth` - Génère un device auth pour un nouveau compte
-
-## 💡 Utilisation de l'API
-
-```typescript
-import { BotAPI } from './api';
-
-// Obtenir le statut de tous les bots
-const status = await BotAPI.getBotStatus();
-
-// Relancer un bot
-await BotAPI.restartBot('email@example.com');
-
-// Lancer les bots inactifs
-await BotAPI.launchInactiveBots();
-```

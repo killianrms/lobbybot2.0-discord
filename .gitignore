@@ -16,4 +16,4 @@ info.json
 dist/
 bot/
 .claude/
-sauv.csv
+sauv.csv.env

@@ -3,6 +3,7 @@ import { BotAccount, DeviceAuth } from '../types';
 import { CSVManager } from './CSVManager';
 import { CosmeticManager } from '../cosmetics/CosmeticManager';
 import { AdminManager } from './AdminManager';
+import { CommandManager } from './CommandManager';
 
 export class BotManager {
     private bots: Map<string, any> = new Map();
@@ -10,10 +11,12 @@ export class BotManager {
     private cosmeticManagers: Map<string, CosmeticManager> = new Map();
     private sentMessageIds: Map<string, Set<string>> = new Map(); // Map<botEmail, Set<messageId>>
     private adminManager: AdminManager;
+    private commandManager: CommandManager;
 
     constructor(csvManager: CSVManager, adminManager?: AdminManager) {
         this.csvManager = csvManager;
         this.adminManager = adminManager || new AdminManager();
+        this.commandManager = new CommandManager();
     }
 
     async launchBot(account: BotAccount): Promise<void> {
@@ -93,6 +96,11 @@ export class BotManager {
             } catch (e) {
                 // Ignore "already friends" errors
             }
+        });
+
+        // HANDLE CHAT COMMANDS
+        (bot as any).on('message:chat', async (message: any) => {
+             await this.commandManager.handleMessage(bot, message);
         });
     }
 
@@ -206,7 +214,7 @@ export class BotManager {
             switch (action) {
                 case 'leave':
                     await party.leave();
-                    console.log(`[${targetName}] �� Left Party`);
+                    console.log(`[${targetName}] 👋 Left Party`);
                     break;
                 case 'kick':
                     const memberToKick = party.members.find((m: any) => m.displayName === data);

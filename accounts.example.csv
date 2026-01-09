@@ -1,0 +1,4 @@
+pseudo,email,password,device_id,account_id,secret
+Bot1,bot1@example.com,VotreMotDePasse1,,,
+Bot2,bot2@example.com,VotreMotDePasse2,,,
+Bot3,bot3@example.com,VotreMotDePasse3,,,

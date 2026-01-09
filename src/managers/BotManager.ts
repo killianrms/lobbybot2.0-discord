@@ -1125,4 +1125,35 @@ export class BotManager {
             console.error(`[${identifier}] ❌ Failed to add friend:`, error.message);
             return false;
         }
+
+    /**
+     * Tries to add a friend on the first available connected bot.
+     * @param targetUsername The Epic username to add
+     * @returns true if successful, false otherwise
+     */
+    async addFriendOnAvailableBot(targetUsername: string): Promise<boolean> {
+        console.log(`[BotManager] Trying to add friend: ${targetUsername}`);
+        
+        // Find a connected bot
+        const connectedBots = this.getActiveBots().filter(b => b.isConnected && b.client && b.client.party);
+        
+        if (connectedBots.length === 0) {
+            console.error('[BotManager] No connected bots available to add friend');
+            return false;
+        }
+
+        // Pick the first one (or implement load balancing)
+        const botInstance = connectedBots[0];
+        const identifier = botInstance.account.pseudo;
+
+        try {
+            console.log(`[${identifier}] Sending friend request to ${targetUsername}...`);
+            await botInstance.client.friend.add(targetUsername);
+            console.log(`[${identifier}] ✅ Friend request sent!`);
+            return true;
+        } catch (error: any) {
+            console.error(`[${identifier}] ❌ Failed to add friend:`, error.message);
+            return false;
+        }
     }
+}

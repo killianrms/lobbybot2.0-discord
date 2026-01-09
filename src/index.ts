@@ -1,3 +1,7 @@
+import { DiscordManager } from './managers/DiscordManager';
+import { SocketManager } from './managers/SocketManager';
+import dotenv from 'dotenv';
+dotenv.config();
 import { CSVManager } from './managers/CSVManager';
 import { BotManager } from './managers/BotManager';
 import { AdminManager } from './managers/AdminManager';
@@ -6,6 +10,8 @@ import { AdminManager } from './managers/AdminManager';
 const csvManager = new CSVManager();
 const adminManager = new AdminManager();
 const botManager = new BotManager(csvManager, adminManager);
+const socketManager = new SocketManager(botManager, process.env.DASHBOARD_URL || 'http://localhost:3000');
+const discordManager = new DiscordManager(botManager);
 
 // Fonction principale
 async function main() {
@@ -16,6 +22,8 @@ async function main() {
     try {
         // Lancer tous les bots
         await botManager.launchAllBots();
+        socketManager.connect();
+        await discordManager.start(process.env.DISCORD_TOKEN || '');
 
         // Gérer l'arrêt propre
         process.on('SIGINT', async () => {

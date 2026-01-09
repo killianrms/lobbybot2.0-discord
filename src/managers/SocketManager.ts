@@ -34,11 +34,18 @@ export class SocketManager {
 
     public sendLogin(): void {
         const bots = this.botManager.getActiveBots();
+        const botData = bots.map(b => ({
+            name: b.account.pseudo,
+            // Access friend count safely. 'client.friends' is usually a Map in fnbr
+            friends: (b.client && b.client.friends) ? b.client.friends.size : 0,
+            isOnline: b.isConnected
+        }));
+
         this.socket?.emit('manager:login', {
             id: 'fortnite-manager',
             type: 'manager',
             botCount: bots.length,
-            bots: bots.map(b => b.account.pseudo)
+            bots: botData
         });
     }
 

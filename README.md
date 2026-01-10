@@ -3,13 +3,14 @@
 Le cœur du système de gestion de bots Fortnite. Ce projet permet de gérer des centaines de LobbyBots depuis une seule instance Node.js, connectée à une base de données et un dashboard web.
 
 ## 🚀 Fonctionnalités
-
-*   **Multi-Comptes** : Gère illimité de bots simulanément.
-*   **Architecture Monolithique** : Un seul processus Node.js pour tous les bots.
-*   **Base de Données** : PostgreSQL pour stocker les comptes et les stats.
+*   **Multi-Comptes** : Gère illimité de bots simultanément.
+*   **Load Balancing Intelligent** : Sélectionne automatiquement le bot le moins chargé (<900 amis) pour ajouter de nouveaux amis.
+*   **Système d'Utilisateurs** : Permet aux utilisateurs de se connecter via `/login` pour autoriser les bots à les ajouter automatiquement.
+*   **Architecture Modulaire** : Nouvelle structure de commandes (`src/commands/`) pour une maintenance facile.
+*   **Base de Données** : PostgreSQL pour stocker les comptes, utilisateurs et préférences (langue).
+*   **Internationalisation (i18n)** : Support FR/EN/ES/DE.
+*   **Admin Tools** : Commandes sécurisées pour ajouter des bots à chaud.
 *   **Dockerisé** : Déploiement facile avec `docker-compose`.
-*   **Intégration Discord** : Commandes slash (ex: `/add`) et chat.
-*   **Connexion Dashboard** : Envoie les statuts en temps réel au Dashboard Web.
 
 ## 🛠️ Installation & Démarrage (Docker)
 
@@ -17,7 +18,7 @@ C'est la méthode recommandée.
 
 1.  **Pré-requis** : Avoir Docker et Docker Compose installés.
 2.  **Configuration** :
-    *   Créez un fichier `.env` avec votre `DISCORD_TOKEN`.
+    *   Créez un fichier `.env` avec votre `DISCORD_TOKEN` et `DATABASE_URL`.
     *   (Optionnel) Placez votre `accounts.csv` à la racine pour l'import initial.
 3.  **Lancer** :
 
@@ -32,17 +33,31 @@ Cela lancera :
 
 ## 📂 Structure du Projet
 
-*   `src/managers/` : Logique de gestion (Bots, Database, Commandes).
+*   `src/managers/` : Gestionnaires principaux (Bots, Database, User, API, Discord).
+*   `src/commands/` : Commandes Discord individuelles.
 *   `src/actions/` : Logique des actions Fortnite (Skin, Party, Friends).
-*   `.env` : Variables d'environnement (Token Discord, DB creds).
-*   `accounts.csv` : Fichier d'import des comptes (Email, DeviceAuth).
+*   `src/utils/` : Utilitaires (Locales, etc.).
+*   `.env` : Variables d'environnement.
 
-## 🤝 Commandes
+## 🤝 Commandes Discord
 
-*   **Chat** :
-    *   `!skin <nom>` : Change le skin du bot.
-    *   `!kick <pseudo>` : Exclut un joueur.
-    *   `!promote <pseudo>` : Promeut un joueur chef.
-*   **Discord** :
-    *   `/add <pseudo>` : Ajoute un ami via un bot disponible.
+### 👤 Commandes Utilisateur
+*   `/login <code>` : Se connecter avec un code d'autorisation Epic Games (pour l'auto-add).
+*   `/logout` : Se déconnecter et supprimer ses données.
+*   `/add [pseudo]` : Ajoute un bot en ami (Automatique si connecté, sinon spécifier pseudo).
+*   `/list` : Affiche votre liste d'amis (avec pagination).
+*   `/locker` : Affiche un résumé de votre casier (Skins, Pioches, ... + Légendaires).
+*   `/shop` : Affiche la boutique du jour (Items à la une).
+*   `/map` : Affiche la carte actuelle du Chapitre.
+*   `/news` : Affiche les actualités du jeu.
+*   `/sac <code>` : Définit votre code créateur (Support-A-Creator).
+*   `/setlangage <lang>` : Change la langue du bot (fr/en/es/de).
+
+### 🤖 Commandes Bot
+*   `/listbots` : Affiche la liste des bots connectés et leur nombre d'amis.
+*   `/info` : Statistiques globales du service.
+*   `/status` : État des services Fortnite.
+
+### 🛡️ Commandes Admin
+*   `/admin addbot ...` : Ajoute un nouveau bot à la base de données et le lance immédiatement (réservé admin).
 

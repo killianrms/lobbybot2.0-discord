@@ -1,12 +1,20 @@
-import { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder } from 'discord.js';
+import { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType } from 'discord.js';
 import { BotManager } from './BotManager';
+import { UserManager } from './UserManager';
+import { APIManager } from './APIManager';
+import { getTranslation } from '../utils/locales';
+import { CommandList } from '../commands';
 
 export class DiscordManager {
     private client: Client;
     private botManager: BotManager;
+    private userManager: UserManager;
+    private apiManager: APIManager;
 
-    constructor(botManager: BotManager) {
+    constructor(botManager: BotManager, userManager: UserManager, apiManager: APIManager) {
         this.botManager = botManager;
+        this.userManager = userManager;
+        this.apiManager = apiManager;
         this.client = new Client({
             intents: [
                 GatewayIntentBits.Guilds,
@@ -27,19 +35,11 @@ export class DiscordManager {
     }
 
     private setupEvents(): void {
-        
+
         // SLASH COMMAND REGISTRATION ON READY
         this.client.on('ready', async () => {
-             const commands = [
-                new SlashCommandBuilder()
-                    .setName('add')
-                    .setDescription('Ajouter un bot en ami')
-                    .addStringOption(option => 
-                        option.setName('pseudo')
-                            .setDescription('Votre pseudo Epic Games')
-                            .setRequired(true))
-            ];
-            
+            const commands = CommandList.map(c => c.data);
+
             const rest = new REST({ version: '10' }).setToken(this.client.token || '');
 
             try {
@@ -59,20 +59,27 @@ export class DiscordManager {
         this.client.on('interactionCreate', async (interaction) => {
             if (!interaction.isChatInputCommand()) return;
 
-            if (interaction.commandName === 'add') {
-                const target = interaction.options.getString('pseudo');
-                if (!target) return;
+            const commandName = interaction.commandName;
 
-                await interaction.deferReply();
+            // LOAD LANGUAGE FROM DB
+            const userLang = await this.userManager.getLanguage(interaction.user.id);
 
-                const result = await this.botManager.addFriendOnAvailableBot(target);
-                
-                if (result === 'SUCCESS') {
-                    await interaction.editReply(`✅ Demande d'ami envoyée à **${target}** !`);
-                } else if (result === 'FULL') {
-                    await interaction.editReply(`⚠️ Tous les bots sont pleins (+900 amis). Demandez à <@335755692134891520> !`);
-                } else {
-                    await interaction.editReply(`❌ Erreur technique. Impossible d'ajouter **${target}**.`);
+            const command = CommandList.find(c => c.data.name === commandName);
+
+            if (command) {
+                try {
+                    await command.execute(interaction, {
+                        botManager: this.botManager,
+                        userManager: this.userManager,
+                        apiManager: this.apiManager
+                    }, userLang);
+                } catch (error) {
+                    console.error(error);
+                    if (interaction.replied || interaction.deferred) {
+                        await interaction.followUp({ content: 'Une erreur est survenue lors de l\'exécution de cette commande.', ephemeral: true });
+                    } else {
+                        await interaction.reply({ content: 'Une erreur est survenue lors de l\'exécution de cette commande.', ephemeral: true });
+                    }
                 }
             }
         });
@@ -91,9 +98,9 @@ export class DiscordManager {
                 }
 
                 message.channel.send(`🔄 Traitement de l'ajout pour **${target}**...`);
-                
+
                 const result = await this.botManager.addFriendOnAvailableBot(target);
-                
+
                 if (result === 'SUCCESS') {
                     message.reply(`✅ Demande d'ami envoyée à **${target}** !`);
                 } else if (result === 'FULL') {

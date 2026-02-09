@@ -233,7 +233,7 @@ export class BotManager {
         return removed;
     }
 
-    async executeAction(targetName: string, action: string, data: any): Promise<void> {
+    async executeAction(targetName: string, action: string, data: string): Promise<void> {
         console.log(`[BotManager] Executing ${action} on ${targetName}`);
 
         const botInstance = this.getActiveBots().find(b => b.account.pseudo === targetName);
@@ -244,30 +244,34 @@ export class BotManager {
         }
 
         const client = botInstance.client;
-        let result = '';
 
         try {
             // REFACTORED: Use shared Actions classes
             switch (action) {
                 case 'leave':
-                    result = await this.partyActions.leaveParty(client);
+                    await this.partyActions.leaveParty(client);
+                    console.log(`[${targetName}] ✅ Parti du groupe`);
                     break;
                 case 'kick':
-                    result = await this.partyActions.kickMember(client, data);
+                    const kickResult = await this.partyActions.kickMember(client, data);
+                    console.log(`[${targetName}] ✅ ${kickResult.member.displayName} exclu`);
                     break;
                 case 'promote':
-                    result = await this.partyActions.promoteMember(client, data);
+                    const promoteResult = await this.partyActions.promoteMember(client, data);
+                    console.log(`[${targetName}] ✅ ${promoteResult.member.displayName} promu`);
                     break;
                 case 'privacy':
-                    result = await this.partyActions.setPrivacy(client, data);
+                    const privacyResult = await this.partyActions.setPrivacy(client, data);
+                    console.log(`[${targetName}] ✅ Confidentialité: ${privacyResult.privacy}`);
                     break;
                 case 'add':
-                    result = await this.socialActions.addFriend(client, data);
+                    const addResult = await this.socialActions.addFriend(client, data);
+                    console.log(`[${targetName}] ✅ Demande d'ami envoyée à ${addResult.target}`);
                     break;
             }
-            console.log(`[${targetName}] ${result}`);
-        } catch (e: any) {
-            console.error(`[${targetName}] ❌ Action ${action} failed:`, e.message);
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Erreur inconnue';
+            console.error(`[${targetName}] ❌ Action ${action} failed:`, message);
         }
     }
 }

@@ -24,5 +24,6 @@
     "@types/pg": "^8.16.0",
     "typescript": "^5.5.3"
   },
-  "private": true
+  "private": true,
+  "packageManager": "pnpm@10.29.2+sha256.8402f675a1f4cc9d4f27bbfab35c2d4a2e1d7eb0131df03dad09619e86674d0c"
 }

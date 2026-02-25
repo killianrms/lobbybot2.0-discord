@@ -1,10 +1,22 @@
 version: '3.8'
 
 services:
+  caddy:
+    image: caddy:2-alpine
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - website
+
   website:
     build: ../lobbybot2.0-website
-    ports:
-      - "3000:3000"
+    restart: always
     environment:
       - PORT=3000
 
@@ -25,6 +37,7 @@ services:
 
   manager:
     build: .
+    restart: always
     environment:
       - DISCORD_TOKEN=${DISCORD_TOKEN}
       - DASHBOARD_URL=http://website:3000
@@ -39,3 +52,7 @@ services:
         condition: service_started
       postgres:
         condition: service_healthy
+
+volumes:
+  caddy_data:
+  caddy_config:

@@ -1,3 +1,9 @@
+{
+    email admin@killianrms.com
+    http_port 80
+    https_port 443
+}
+
 dashboard.killianrms.com {
     reverse_proxy website:3000
 }

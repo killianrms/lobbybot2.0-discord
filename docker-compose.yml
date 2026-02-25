@@ -18,7 +18,6 @@ services:
     restart: always
     environment:
       - DEFAULT_EMAIL=admin@killianrms.com
-      - ACMESH_DNS_API=dns_cf
       - CF_Token=${CF_TOKEN}
     volumes_from:
       - nginx-proxy
@@ -36,6 +35,7 @@ services:
       - VIRTUAL_HOST=dashboard.killianrms.com
       - VIRTUAL_PORT=3000
       - LETSENCRYPT_HOST=dashboard.killianrms.com
+      - LETSENCRYPT_ACMESH_PARAMS=--dns dns_cf
     depends_on:
       - nginx-proxy
 

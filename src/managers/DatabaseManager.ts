@@ -11,58 +11,75 @@ export class DatabaseManager {
     constructor(csvManager: CSVManager) {
         this.csvManager = csvManager;
 
+        const isExternal = process.env.DB_HOST && process.env.DB_HOST !== 'localhost' && process.env.DB_HOST !== '127.0.0.1';
+
         this.pool = new Pool({
             host: process.env.DB_HOST || 'localhost',
             user: process.env.DB_USER || 'lobbybot',
             password: process.env.DB_PASS || 'lobbybotpassword',
             database: process.env.DB_NAME || 'lobbybot',
             port: parseInt(process.env.DB_PORT || '5432', 10),
+            ssl: isExternal ? { rejectUnauthorized: false } : false,
+            connectionTimeoutMillis: 10000,
+            idleTimeoutMillis: 30000,
         });
 
-        this.init();
+        // Handle unexpected pool errors to prevent crashes
+        this.pool.on('error', (err) => {
+            console.error('[Database] Pool error (will reconnect on next query):', err.message);
+        });
     }
 
-    private async init() {
-        try {
-            const client = await this.pool.connect();
-            console.log('[Database] Connected to PostgreSQL');
-
-            // Create table
-            await client.query(`
-                CREATE TABLE IF NOT EXISTS bots (
-                    email TEXT PRIMARY KEY,
-                    pseudo TEXT,
-                    device_id TEXT,
-                    account_id TEXT,
-                    secret TEXT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                );
-
-                CREATE TABLE IF NOT EXISTS users (
-                    discord_id TEXT PRIMARY KEY,
-                    epic_pseudo TEXT,
-                    device_id TEXT,
-                    account_id TEXT,
-                    secret TEXT,
-                    language TEXT DEFAULT 'en',
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                );
-            `);
-
-            // Migration for existing users table if language column is missing
+    public async init(retries = 5, delay = 3000): Promise<void> {
+        for (let attempt = 1; attempt <= retries; attempt++) {
             try {
-                await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS language TEXT DEFAULT 'en';`);
-                // Also update default for future rows if table existed but we want new default
-                await client.query(`ALTER TABLE users ALTER COLUMN language SET DEFAULT 'en';`);
-            } catch (e) {
-                // Column likely exists or other minor issue
+                const client = await this.pool.connect();
+                console.log('[Database] Connected to PostgreSQL');
+
+                // Create tables
+                await client.query(`
+                    CREATE TABLE IF NOT EXISTS bots (
+                        email TEXT PRIMARY KEY,
+                        pseudo TEXT,
+                        device_id TEXT,
+                        account_id TEXT,
+                        secret TEXT,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+
+                    CREATE TABLE IF NOT EXISTS users (
+                        discord_id TEXT PRIMARY KEY,
+                        epic_pseudo TEXT,
+                        device_id TEXT,
+                        account_id TEXT,
+                        secret TEXT,
+                        language TEXT DEFAULT 'en',
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                `);
+
+                // Migration for existing users table if language column is missing
+                try {
+                    await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS language TEXT DEFAULT 'en';`);
+                    await client.query(`ALTER TABLE users ALTER COLUMN language SET DEFAULT 'en';`);
+                } catch (e) {
+                    // Column likely exists or other minor issue
+                }
+
+                client.release();
+                await this.checkMigration();
+                return; // Success — exit the retry loop
+
+            } catch (e: any) {
+                console.error(`[Database] Connection attempt ${attempt}/${retries} failed: ${e.message}`);
+                if (attempt < retries) {
+                    const waitTime = delay * attempt;
+                    console.log(`[Database] Retrying in ${waitTime / 1000}s...`);
+                    await new Promise(r => setTimeout(r, waitTime));
+                } else {
+                    console.error('[Database] All connection attempts failed. The bot will start but DB features will be unavailable.');
+                }
             }
-
-            client.release();
-            await this.checkMigration();
-
-        } catch (e: any) {
-            console.error('[Database] Connection failed:', e.message);
         }
     }
 

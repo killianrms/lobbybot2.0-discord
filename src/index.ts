@@ -15,6 +15,7 @@ async function main() {
     // 1. Initialize Managers
     const csvManager = new CSVManager();
     const dbManager = new DatabaseManager(csvManager);
+    await dbManager.init();
     const botManager = new BotManager(dbManager);
     const userManager = new UserManager(dbManager);
     const apiManager = new APIManager();

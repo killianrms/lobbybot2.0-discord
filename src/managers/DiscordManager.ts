@@ -64,32 +64,37 @@ export class DiscordManager {
         this.client.on('interactionCreate', async (interaction) => {
             if (!interaction.isChatInputCommand()) return;
 
-            const commandName = interaction.commandName;
+            const command = CommandList.find(c => c.data.name === interaction.commandName);
+            if (!command) return;
 
-            // LOAD LANGUAGE FROM DB
-            const userLang = await this.userManager.getLanguage(interaction.user.id);
+            // Fetch language with a timeout to preserve the 3s deferReply window
+            let userLang = 'en';
+            try {
+                userLang = await Promise.race([
+                    this.userManager.getLanguage(interaction.user.id),
+                    new Promise<string>((resolve) => setTimeout(() => resolve('en'), 1500))
+                ]);
+            } catch {
+                userLang = 'en';
+            }
 
-            const command = CommandList.find(c => c.data.name === commandName);
-
-            if (command) {
+            try {
+                await command.execute(interaction, {
+                    botManager: this.botManager,
+                    userManager: this.userManager,
+                    apiManager: this.apiManager
+                }, userLang);
+            } catch (error) {
+                console.error('[Discord] Command error:', error);
                 try {
-                    await command.execute(interaction, {
-                        botManager: this.botManager,
-                        userManager: this.userManager,
-                        apiManager: this.apiManager
-                    }, userLang);
-                } catch (error) {
-                    console.error('[Discord] Command error:', error);
-                    try {
-                        const errMsg = 'Une erreur est survenue lors de l\'exécution de cette commande.';
-                        if (interaction.replied || interaction.deferred) {
-                            await interaction.followUp({ content: errMsg, flags: 64 });
-                        } else {
-                            await interaction.reply({ content: errMsg, flags: 64 });
-                        }
-                    } catch {
-                        // Interaction expired, nothing we can do
+                    const errMsg = 'Une erreur est survenue lors de l\'exécution de cette commande.';
+                    if (interaction.replied || interaction.deferred) {
+                        await interaction.followUp({ content: errMsg, flags: 64 });
+                    } else {
+                        await interaction.reply({ content: errMsg, flags: 64 });
                     }
+                } catch {
+                    // Interaction expired, nothing we can do
                 }
             }
         });

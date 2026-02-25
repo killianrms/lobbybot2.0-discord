@@ -16,7 +16,7 @@ export class DatabaseManager {
             user: process.env.DB_USER || 'lobbybot',
             password: process.env.DB_PASS || 'lobbybotpassword',
             database: process.env.DB_NAME || 'lobbybot',
-            port: 5432,
+            port: parseInt(process.env.DB_PORT || '5432', 10),
         });
 
         this.init();

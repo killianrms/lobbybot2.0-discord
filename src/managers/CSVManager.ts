@@ -14,6 +14,18 @@ export class CSVManager {
      * Lit tous les comptes depuis le fichier CSV
      */
     async readAccounts(): Promise<BotAccount[]> {
+        // Vérifie que le fichier existe et est bien un fichier (pas un dossier)
+        try {
+            const stat = await fs.promises.stat(this.csvPath);
+            if (!stat.isFile()) {
+                console.log('[CSVManager] accounts.csv n\'est pas un fichier, aucun compte chargé.');
+                return [];
+            }
+        } catch {
+            // Le fichier n'existe pas
+            return [];
+        }
+
         return new Promise((resolve, reject) => {
             const accounts: BotAccount[] = [];
 

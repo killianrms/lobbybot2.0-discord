@@ -64,6 +64,9 @@ export class DiscordManager {
         this.client.on('interactionCreate', async (interaction) => {
             if (!interaction.isChatInputCommand()) return;
 
+            // Skip stale interactions (queued during restart, already expired)
+            if (Date.now() - interaction.createdTimestamp > 2500) return;
+
             const command = CommandList.find(c => c.data.name === interaction.commandName);
             if (!command) return;
 

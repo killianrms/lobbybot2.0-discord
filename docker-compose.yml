@@ -18,6 +18,8 @@ services:
     restart: always
     environment:
       - DEFAULT_EMAIL=admin@killianrms.com
+      - ACMESH_DNS_API=dns_cf
+      - CF_Token=${CF_TOKEN}
     volumes_from:
       - nginx-proxy
     volumes:

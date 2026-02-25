@@ -35,7 +35,7 @@ services:
       - VIRTUAL_HOST=dashboard.killianrms.com
       - VIRTUAL_PORT=3000
       - LETSENCRYPT_HOST=dashboard.killianrms.com
-      - LETSENCRYPT_ACMESH_PARAMS=--dns dns_cf
+      - ACME_CHALLENGE=dns
     depends_on:
       - nginx-proxy
 

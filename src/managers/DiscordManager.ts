@@ -36,6 +36,11 @@ export class DiscordManager {
 
     private setupEvents(): void {
 
+        // Prevent unhandled error events from crashing the process
+        this.client.on('error', (error) => {
+            console.error('[Discord] Client error:', error.message);
+        });
+
         // SLASH COMMAND REGISTRATION ON READY
         this.client.on('ready', async () => {
             const commands = CommandList.map(c => c.data);
@@ -74,11 +79,16 @@ export class DiscordManager {
                         apiManager: this.apiManager
                     }, userLang);
                 } catch (error) {
-                    console.error(error);
-                    if (interaction.replied || interaction.deferred) {
-                        await interaction.followUp({ content: 'Une erreur est survenue lors de l\'exécution de cette commande.', ephemeral: true });
-                    } else {
-                        await interaction.reply({ content: 'Une erreur est survenue lors de l\'exécution de cette commande.', ephemeral: true });
+                    console.error('[Discord] Command error:', error);
+                    try {
+                        const errMsg = 'Une erreur est survenue lors de l\'exécution de cette commande.';
+                        if (interaction.replied || interaction.deferred) {
+                            await interaction.followUp({ content: errMsg, flags: 64 });
+                        } else {
+                            await interaction.reply({ content: errMsg, flags: 64 });
+                        }
+                    } catch {
+                        // Interaction expired, nothing we can do
                     }
                 }
             }

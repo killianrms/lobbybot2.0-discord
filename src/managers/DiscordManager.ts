@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, ModalBuilder, TextInputBuilder, TextInputStyle } from 'discord.js';
+import { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, ModalBuilder, TextInputBuilder, TextInputStyle, MessageFlags } from 'discord.js';
 import { BotManager } from './BotManager';
 import { UserManager } from './UserManager';
 import { APIManager } from './APIManager';
@@ -65,7 +65,7 @@ export class DiscordManager {
 
             // --- BUTTON: login_check_device → poll device flow ---
             if (interaction.isButton() && interaction.customId === 'login_check_device') {
-                await interaction.deferReply({ ephemeral: true });
+                await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
                 const lang = await this.userManager.getLanguage(interaction.user.id).catch(() => 'en');
                 const t = (key: string) => getTranslation(lang, key);
@@ -85,20 +85,59 @@ export class DiscordManager {
                 return;
             }
 
+            // --- BUTTON: login_enter_code → open modal (fallback flow) ---
+            if (interaction.isButton() && interaction.customId === 'login_enter_code') {
+                const lang = await this.userManager.getLanguage(interaction.user.id).catch(() => 'en');
+                const t = (key: string) => getTranslation(lang, key);
+
+                const modal = new ModalBuilder()
+                    .setCustomId('login_modal')
+                    .setTitle(t('LOGIN_MODAL_TITLE'));
+
+                const codeInput = new TextInputBuilder()
+                    .setCustomId('epic_code')
+                    .setLabel(t('LOGIN_MODAL_LABEL'))
+                    .setStyle(TextInputStyle.Short)
+                    .setPlaceholder(t('LOGIN_MODAL_PLACEHOLDER'))
+                    .setRequired(true);
+
+                modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(codeInput));
+                await interaction.showModal(modal);
+                return;
+            }
+
+            // --- MODAL SUBMIT: login_modal → process auth code (fallback flow) ---
+            if (interaction.isModalSubmit() && interaction.customId === 'login_modal') {
+                await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+                const lang = await this.userManager.getLanguage(interaction.user.id).catch(() => 'en');
+                const t = (key: string) => getTranslation(lang, key);
+
+                const code = interaction.fields.getTextInputValue('epic_code').trim();
+                const result = await this.userManager.handleLogin(interaction.user.id, code);
+
+                if (result.startsWith('SUCCESS')) {
+                    await interaction.editReply(t('LOGIN_SUCCESS').replace('{pseudo}', result.split(':')[1]));
+                } else {
+                    await interaction.editReply(t('LOGIN_ERROR').replace('{error}', result.split(':')[1] || ''));
+                }
+                return;
+            }
+
             if (!interaction.isChatInputCommand()) return;
 
             // Skip stale interactions (queued during restart, already expired)
-            if (Date.now() - interaction.createdTimestamp > 2500) return;
+            if (Date.now() - interaction.createdTimestamp > 1500) return;
 
             const command = CommandList.find(c => c.data.name === interaction.commandName);
             if (!command) return;
 
-            // Fetch language with a timeout to preserve the 3s deferReply window
+            // Fetch language quickly — short timeout to preserve the 3s deferReply window
             let userLang = 'en';
             try {
                 userLang = await Promise.race([
                     this.userManager.getLanguage(interaction.user.id),
-                    new Promise<string>((resolve) => setTimeout(() => resolve('en'), 1500))
+                    new Promise<string>((resolve) => setTimeout(() => resolve('en'), 300))
                 ]);
             } catch {
                 userLang = 'en';

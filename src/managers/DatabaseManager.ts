@@ -38,7 +38,7 @@ export class DatabaseManager {
 
                 // Create tables
                 await client.query(`
-                    CREATE TABLE IF NOT EXISTS bots (
+                    CREATE TABLE IF NOT EXISTS epic_accounts (
                         email TEXT PRIMARY KEY,
                         pseudo TEXT,
                         device_id TEXT,
@@ -57,6 +57,18 @@ export class DatabaseManager {
                         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                     );
                 `);
+
+                // Migration: copy bots → epic_accounts if legacy table exists and epic_accounts is empty
+                try {
+                    const legacyExists = await client.query(`SELECT to_regclass('public.bots') AS tbl`);
+                    if (legacyExists.rows[0]?.tbl) {
+                        const epCount = await client.query('SELECT count(*) AS c FROM epic_accounts');
+                        if (parseInt(epCount.rows[0].c) === 0) {
+                            await client.query(`INSERT INTO epic_accounts SELECT * FROM epic_accounts ON CONFLICT DO NOTHING`);
+                            console.log('[Database] Migrated bots → epic_accounts');
+                        }
+                    }
+                } catch { /* bots table may not exist */ }
 
                 // Migration for existing users table if language column is missing
                 try {
@@ -85,7 +97,7 @@ export class DatabaseManager {
 
     private async checkMigration() {
         try {
-            const res = await this.pool.query('SELECT count(*) as count FROM bots');
+            const res = await this.pool.query('SELECT count(*) as count FROM epic_accounts');
             const rowCount = parseInt(res.rows[0].count);
 
             if (rowCount === 0) {
@@ -101,7 +113,7 @@ export class DatabaseManager {
 
                         for (const bot of accounts) {
                             await client.query(`
-                                INSERT INTO bots (email, pseudo, device_id, account_id, secret)
+                                INSERT INTO epic_accounts (email, pseudo, device_id, account_id, secret)
                                 VALUES ($1, $2, $3, $4, $5)
                                 ON CONFLICT (email) DO NOTHING
                             `, [
@@ -129,7 +141,7 @@ export class DatabaseManager {
     }
 
     public async getAllBots(): Promise<BotAccount[]> {
-        const res = await this.pool.query('SELECT * FROM bots');
+        const res = await this.pool.query('SELECT * FROM epic_accounts');
         return res.rows.map(row => ({
             email: row.email,
             pseudo: row.pseudo,
@@ -144,7 +156,7 @@ export class DatabaseManager {
 
     public async addBot(account: BotAccount): Promise<void> {
         await this.pool.query(`
-            INSERT INTO bots (email, pseudo, device_id, account_id, secret)
+            INSERT INTO epic_accounts (email, pseudo, device_id, account_id, secret)
             VALUES ($1, $2, $3, $4, $5)
             ON CONFLICT (email) DO UPDATE SET
                 pseudo = EXCLUDED.pseudo,
@@ -161,7 +173,7 @@ export class DatabaseManager {
     }
 
     public async removeBot(email: string): Promise<void> {
-        await this.pool.query('DELETE FROM bots WHERE email = $1', [email]);
+        await this.pool.query('DELETE FROM epic_accounts WHERE email = $1', [email]);
     }
 
     // --- USER MANAGEMENT ---

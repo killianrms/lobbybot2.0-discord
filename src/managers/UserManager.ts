@@ -2,77 +2,86 @@ import { Client } from 'fnbr';
 import axios from 'axios';
 import { DatabaseManager } from './DatabaseManager';
 
-// launcherAppClient2 — supports deviceAuthorization flow
-const EG_LAUNCHER_ID = '34a02cf8f4414e29b15921876da36f9a';
-const EG_LAUNCHER_SECRET = 'daafbccc737745039dffe53d94fc76cf';
-const EG_LAUNCHER_AUTH = `Basic ${Buffer.from(`${EG_LAUNCHER_ID}:${EG_LAUNCHER_SECRET}`).toString('base64')}`;
-
 // fortniteAndroidGameClient — used for token exchange & device auth creation
 const EG_ANDROID_ID = '3f69e56c7649492c8cc29f1af08a8a12';
 const EG_ANDROID_SECRET = 'b51ee9cb12234f50a69efa67ef53812e';
 const EG_ANDROID_AUTH = `Basic ${Buffer.from(`${EG_ANDROID_ID}:${EG_ANDROID_SECRET}`).toString('base64')}`;
 
 const EG_TOKEN_URL = 'https://account-public-service-prod.ol.epicgames.com/account/api/oauth/token';
+const EG_DEVICE_AUTH_URL = 'https://account-public-service-prod.ol.epicgames.com/account/api/oauth/deviceAuthorization';
+
+// Clients to try (in order) for deviceAuthorization endpoint
+const DEVICE_FLOW_CLIENTS = [
+    ['34a02cf8f4414e29b15921876da36f9a', 'daafbccc737745039dffe53d94fc76cf'], // launcherAppClient2
+    ['38dbfc3196024d5980386a37b7c792bb', 'a6280b87-e45e-409b-9681-8f15eb7dbcf5'], // androidPortal
+    ['8f50327ba00d4ebeb81991ee04a42fc1', '0b0d21c7-c195-4c75-abb0-00ebc36b60f5'], // EOS SDK Auth Tool
+] as const;
+
+interface DeviceSession { deviceCode: string; authHeader: string; }
 
 export class UserManager {
     private db: DatabaseManager;
-    private deviceFlowSessions: Map<string, string> = new Map(); // discordId -> device_code
+    private deviceFlowSessions: Map<string, DeviceSession> = new Map();
 
     constructor(db: DatabaseManager) {
         this.db = db;
     }
 
+    /** Returns device flow data, or throws Error('DEVICE_FLOW_UNAVAILABLE') if no client works */
     public async initiateDeviceFlow(discordId: string): Promise<{ userCode: string; activateUrl: string }> {
-        const response = await axios.post(
-            'https://account-public-service-prod.ol.epicgames.com/account/api/oauth/deviceAuthorization',
-            '',
-            { headers: { 'Authorization': EG_LAUNCHER_AUTH, 'Content-Type': 'application/x-www-form-urlencoded' } }
-        );
-        const { device_code, user_code, verification_uri_complete } = response.data;
-        this.deviceFlowSessions.set(discordId, device_code);
-        return {
-            userCode: user_code as string,
-            activateUrl: (verification_uri_complete as string) || `https://www.epicgames.com/id/activate?userCode=${user_code}`
-        };
+        for (const [id, secret] of DEVICE_FLOW_CLIENTS) {
+            try {
+                const authHeader = `Basic ${Buffer.from(`${id}:${secret}`).toString('base64')}`;
+                const response = await axios.post(
+                    EG_DEVICE_AUTH_URL,
+                    'scope=basic_profile',
+                    { headers: { 'Authorization': authHeader, 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 6000 }
+                );
+                const { device_code, user_code, verification_uri_complete } = response.data;
+                this.deviceFlowSessions.set(discordId, { deviceCode: device_code, authHeader });
+                return {
+                    userCode: user_code as string,
+                    activateUrl: (verification_uri_complete as string) || `https://www.epicgames.com/id/activate?userCode=${user_code}`
+                };
+            } catch { /* try next client */ }
+        }
+        throw new Error('DEVICE_FLOW_UNAVAILABLE');
     }
 
     public async completeDeviceFlow(discordId: string): Promise<string> {
-        const deviceCode = this.deviceFlowSessions.get(discordId);
-        if (!deviceCode) return 'ERROR:no_session';
+        const session = this.deviceFlowSessions.get(discordId);
+        if (!session) return 'ERROR:no_session';
 
         try {
-            // 1. Poll with launcher client → get launcher access token
+            // 1. Poll with the client that initiated the flow
             const tokenResponse = await axios.post(
                 EG_TOKEN_URL,
                 new URLSearchParams({
                     grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
-                    device_code: deviceCode
+                    device_code: session.deviceCode
                 }).toString(),
-                { headers: { 'Authorization': EG_LAUNCHER_AUTH, 'Content-Type': 'application/x-www-form-urlencoded' } }
+                { headers: { 'Authorization': session.authHeader, 'Content-Type': 'application/x-www-form-urlencoded' } }
             );
             const launcherToken: string = tokenResponse.data.access_token;
             const account_id: string = tokenResponse.data.account_id;
             const displayName: string = tokenResponse.data.displayName;
 
-            // 2. Get exchange code from launcher token
+            // 2. Get exchange code
             const exchangeResponse = await axios.get(
                 'https://account-public-service-prod.ol.epicgames.com/account/api/oauth/exchange',
                 { headers: { 'Authorization': `Bearer ${launcherToken}` } }
             );
             const exchangeCode: string = exchangeResponse.data.code;
 
-            // 3. Exchange for Android client token
+            // 3. Exchange for Android token (compatible with fnbr deviceAuth login)
             const androidTokenResponse = await axios.post(
                 EG_TOKEN_URL,
-                new URLSearchParams({
-                    grant_type: 'exchange_code',
-                    exchange_code: exchangeCode
-                }).toString(),
+                new URLSearchParams({ grant_type: 'exchange_code', exchange_code: exchangeCode }).toString(),
                 { headers: { 'Authorization': EG_ANDROID_AUTH, 'Content-Type': 'application/x-www-form-urlencoded' } }
             );
             const androidToken: string = androidTokenResponse.data.access_token;
 
-            // 4. Create device auth with Android token
+            // 4. Create device auth credentials
             const deviceAuthResponse = await axios.post(
                 `https://account-public-service-prod.ol.epicgames.com/account/api/public/account/${account_id}/deviceAuth`,
                 {},

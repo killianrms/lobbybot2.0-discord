@@ -23,7 +23,14 @@ export const locales: Record<string, Record<string, string>> = {
         LOGIN_SUCCESS: '✅ Connecté en tant que **{pseudo}** ! Vous pouvez maintenant utiliser `/add` sans arguments.',
         LOGIN_PENDING: '⏳ Pas encore validé. Activez le code sur Epic Games puis réessayez.',
         LOGIN_EXPIRED: '❌ Le code a expiré. Relancez `/login` pour en obtenir un nouveau.',
-        LOGIN_ERROR: '❌ Erreur : {error}'
+        LOGIN_ERROR: '❌ Erreur : {error}',
+        LOGIN_FALLBACK_DESC: '1️⃣ Connectez-vous à Epic Games puis cliquez sur **"Obtenir mon code"**\n2️⃣ Sur la page JSON, copiez la valeur de `authorizationCode`\n3️⃣ Cliquez sur **"Entrer mon code ✏️"** et collez-le',
+        LOGIN_FALLBACK_FOOTER: 'Le code expire rapidement, utilisez-le immédiatement.',
+        LOGIN_BTN_GET_CODE: '🔑 Obtenir mon code',
+        LOGIN_BTN_ENTER: 'Entrer mon code ✏️',
+        LOGIN_MODAL_TITLE: 'Code d\'autorisation Epic Games',
+        LOGIN_MODAL_LABEL: 'Collez votre authorizationCode ici',
+        LOGIN_MODAL_PLACEHOLDER: 'ex: a1b2c3d4e5f6...'
     },
     en: {
         PREV: 'Previous',
@@ -49,7 +56,14 @@ export const locales: Record<string, Record<string, string>> = {
         LOGIN_SUCCESS: '✅ Logged in as **{pseudo}**! You can now use `/add` without arguments.',
         LOGIN_PENDING: '⏳ Not confirmed yet. Activate the code on Epic Games then try again.',
         LOGIN_EXPIRED: '❌ The code has expired. Run `/login` again to get a new one.',
-        LOGIN_ERROR: '❌ Error: {error}'
+        LOGIN_ERROR: '❌ Error: {error}',
+        LOGIN_FALLBACK_DESC: '1️⃣ Log in to Epic Games then click **"Get my code"**\n2️⃣ On the JSON page, copy the value of `authorizationCode`\n3️⃣ Click **"Enter my code ✏️"** and paste it',
+        LOGIN_FALLBACK_FOOTER: 'The code expires quickly, use it immediately.',
+        LOGIN_BTN_GET_CODE: '🔑 Get my code',
+        LOGIN_BTN_ENTER: 'Enter my code ✏️',
+        LOGIN_MODAL_TITLE: 'Epic Games Authorization Code',
+        LOGIN_MODAL_LABEL: 'Paste your authorizationCode here',
+        LOGIN_MODAL_PLACEHOLDER: 'e.g.: a1b2c3d4e5f6...'
     },
     es: {
         PREV: 'Anterior',
@@ -75,7 +89,14 @@ export const locales: Record<string, Record<string, string>> = {
         LOGIN_SUCCESS: '✅ Conectado como **{pseudo}**. ¡Ya puedes usar `/add` sin argumentos!',
         LOGIN_PENDING: '⏳ Aún no confirmado. Activa el código en Epic Games e inténtalo de nuevo.',
         LOGIN_EXPIRED: '❌ El código ha expirado. Ejecuta `/login` de nuevo para obtener uno nuevo.',
-        LOGIN_ERROR: '❌ Error: {error}'
+        LOGIN_ERROR: '❌ Error: {error}',
+        LOGIN_FALLBACK_DESC: '1️⃣ Inicia sesión en Epic Games y haz clic en **"Obtener mi código"**\n2️⃣ En la página JSON, copia el valor de `authorizationCode`\n3️⃣ Haz clic en **"Ingresar mi código ✏️"** y pégalo',
+        LOGIN_FALLBACK_FOOTER: 'El código expira rápidamente, úsalo de inmediato.',
+        LOGIN_BTN_GET_CODE: '🔑 Obtener mi código',
+        LOGIN_BTN_ENTER: 'Ingresar mi código ✏️',
+        LOGIN_MODAL_TITLE: 'Código de autorización Epic Games',
+        LOGIN_MODAL_LABEL: 'Pega tu authorizationCode aquí',
+        LOGIN_MODAL_PLACEHOLDER: 'ej: a1b2c3d4e5f6...'
     },
     de: {
         PREV: 'Vorherige',
@@ -101,7 +122,14 @@ export const locales: Record<string, Record<string, string>> = {
         LOGIN_SUCCESS: '✅ Angemeldet als **{pseudo}**! Du kannst jetzt `/add` ohne Argumente verwenden.',
         LOGIN_PENDING: '⏳ Noch nicht bestätigt. Aktiviere den Code bei Epic Games und versuche es erneut.',
         LOGIN_EXPIRED: '❌ Der Code ist abgelaufen. Führe `/login` erneut aus, um einen neuen zu erhalten.',
-        LOGIN_ERROR: '❌ Fehler: {error}'
+        LOGIN_ERROR: '❌ Fehler: {error}',
+        LOGIN_FALLBACK_DESC: '1️⃣ Melde dich bei Epic Games an, dann klicke auf **"Code holen"**\n2️⃣ Kopiere auf der JSON-Seite den Wert von `authorizationCode`\n3️⃣ Klicke auf **"Code eingeben ✏️"** und füge ihn ein',
+        LOGIN_FALLBACK_FOOTER: 'Der Code läuft schnell ab, benutze ihn sofort.',
+        LOGIN_BTN_GET_CODE: '🔑 Code holen',
+        LOGIN_BTN_ENTER: 'Code eingeben ✏️',
+        LOGIN_MODAL_TITLE: 'Epic Games Autorisierungscode',
+        LOGIN_MODAL_LABEL: 'Füge deinen authorizationCode hier ein',
+        LOGIN_MODAL_PLACEHOLDER: 'z.B.: a1b2c3d4e5f6...'
     }
 };
 

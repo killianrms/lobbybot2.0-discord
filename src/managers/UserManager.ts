@@ -2,9 +2,17 @@ import { Client } from 'fnbr';
 import axios from 'axios';
 import { DatabaseManager } from './DatabaseManager';
 
-const EG_CLIENT_ID = '3f69e56c7649492c8cc29f1af08a8a12';
-const EG_CLIENT_SECRET = 'b51ee9cb12234f50a69efa67ef53812e';
-const EG_AUTH_HEADER = `Basic ${Buffer.from(`${EG_CLIENT_ID}:${EG_CLIENT_SECRET}`).toString('base64')}`;
+// launcherAppClient2 — supports deviceAuthorization flow
+const EG_LAUNCHER_ID = '34a02cf8f4414e29b15921876da36f9a';
+const EG_LAUNCHER_SECRET = 'daafbccc737745039dffe53d94fc76cf';
+const EG_LAUNCHER_AUTH = `Basic ${Buffer.from(`${EG_LAUNCHER_ID}:${EG_LAUNCHER_SECRET}`).toString('base64')}`;
+
+// fortniteAndroidGameClient — used for token exchange & device auth creation
+const EG_ANDROID_ID = '3f69e56c7649492c8cc29f1af08a8a12';
+const EG_ANDROID_SECRET = 'b51ee9cb12234f50a69efa67ef53812e';
+const EG_ANDROID_AUTH = `Basic ${Buffer.from(`${EG_ANDROID_ID}:${EG_ANDROID_SECRET}`).toString('base64')}`;
+
+const EG_TOKEN_URL = 'https://account-public-service-prod.ol.epicgames.com/account/api/oauth/token';
 
 export class UserManager {
     private db: DatabaseManager;
@@ -18,7 +26,7 @@ export class UserManager {
         const response = await axios.post(
             'https://account-public-service-prod.ol.epicgames.com/account/api/oauth/deviceAuthorization',
             '',
-            { headers: { 'Authorization': EG_AUTH_HEADER, 'Content-Type': 'application/x-www-form-urlencoded' } }
+            { headers: { 'Authorization': EG_LAUNCHER_AUTH, 'Content-Type': 'application/x-www-form-urlencoded' } }
         );
         const { device_code, user_code, verification_uri_complete } = response.data;
         this.deviceFlowSessions.set(discordId, device_code);
@@ -33,21 +41,42 @@ export class UserManager {
         if (!deviceCode) return 'ERROR:no_session';
 
         try {
+            // 1. Poll with launcher client → get launcher access token
             const tokenResponse = await axios.post(
-                'https://account-public-service-prod.ol.epicgames.com/account/api/oauth/token',
+                EG_TOKEN_URL,
                 new URLSearchParams({
                     grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
                     device_code: deviceCode
                 }).toString(),
-                { headers: { 'Authorization': EG_AUTH_HEADER, 'Content-Type': 'application/x-www-form-urlencoded' } }
+                { headers: { 'Authorization': EG_LAUNCHER_AUTH, 'Content-Type': 'application/x-www-form-urlencoded' } }
             );
+            const launcherToken: string = tokenResponse.data.access_token;
+            const account_id: string = tokenResponse.data.account_id;
+            const displayName: string = tokenResponse.data.displayName;
 
-            const { access_token, account_id, displayName } = tokenResponse.data;
+            // 2. Get exchange code from launcher token
+            const exchangeResponse = await axios.get(
+                'https://account-public-service-prod.ol.epicgames.com/account/api/oauth/exchange',
+                { headers: { 'Authorization': `Bearer ${launcherToken}` } }
+            );
+            const exchangeCode: string = exchangeResponse.data.code;
 
+            // 3. Exchange for Android client token
+            const androidTokenResponse = await axios.post(
+                EG_TOKEN_URL,
+                new URLSearchParams({
+                    grant_type: 'exchange_code',
+                    exchange_code: exchangeCode
+                }).toString(),
+                { headers: { 'Authorization': EG_ANDROID_AUTH, 'Content-Type': 'application/x-www-form-urlencoded' } }
+            );
+            const androidToken: string = androidTokenResponse.data.access_token;
+
+            // 4. Create device auth with Android token
             const deviceAuthResponse = await axios.post(
                 `https://account-public-service-prod.ol.epicgames.com/account/api/public/account/${account_id}/deviceAuth`,
                 {},
-                { headers: { 'Authorization': `Bearer ${access_token}` } }
+                { headers: { 'Authorization': `Bearer ${androidToken}` } }
             );
 
             await this.db.saveUser(discordId, displayName, deviceAuthResponse.data);

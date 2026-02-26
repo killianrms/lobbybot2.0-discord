@@ -142,10 +142,15 @@ export class DatabaseManager {
 
     public async getAllBots(): Promise<BotAccount[]> {
         const res = await this.pool.query('SELECT * FROM epic_accounts');
+        if (res.rows.length > 0) {
+            console.log('[Database] epic_accounts columns:', Object.keys(res.rows[0]));
+            const r = res.rows[0];
+            console.log('[Database] First row sample — device_id:', r.device_id, '| account_id:', r.account_id, '| secret:', r.secret ? r.secret.substring(0, 6) + '...' : 'NULL');
+        }
         return res.rows.map(row => ({
             email: row.email,
             pseudo: row.pseudo,
-            password: '', // Dummy password for type compatibility
+            password: '',
             deviceAuth: {
                 deviceId: row.device_id,
                 accountId: row.account_id,

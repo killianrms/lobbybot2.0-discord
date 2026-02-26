@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType } from 'discord.js';
+import { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, ModalBuilder, TextInputBuilder, TextInputStyle } from 'discord.js';
 import { BotManager } from './BotManager';
 import { UserManager } from './UserManager';
 import { APIManager } from './APIManager';
@@ -62,6 +62,43 @@ export class DiscordManager {
 
         // INTERACTION HANDLER
         this.client.on('interactionCreate', async (interaction) => {
+
+            // --- BUTTON: login_enter_code → open modal ---
+            if (interaction.isButton() && interaction.customId === 'login_enter_code') {
+                const modal = new ModalBuilder()
+                    .setCustomId('login_modal')
+                    .setTitle('Code d\'autorisation Epic Games');
+
+                const codeInput = new TextInputBuilder()
+                    .setCustomId('epic_code')
+                    .setLabel('Collez votre authorizationCode ici')
+                    .setStyle(TextInputStyle.Short)
+                    .setPlaceholder('ex: a1b2c3d4e5f6...')
+                    .setRequired(true);
+
+                const row = new ActionRowBuilder<TextInputBuilder>().addComponents(codeInput);
+                modal.addComponents(row);
+
+                await interaction.showModal(modal);
+                return;
+            }
+
+            // --- MODAL SUBMIT: login_modal → process auth code ---
+            if (interaction.isModalSubmit() && interaction.customId === 'login_modal') {
+                await interaction.deferReply({ ephemeral: true });
+
+                const code = interaction.fields.getTextInputValue('epic_code').trim();
+                const result = await this.userManager.handleLogin(interaction.user.id, code);
+
+                if (result.startsWith('SUCCESS')) {
+                    const pseudo = result.split(':')[1];
+                    await interaction.editReply(`✅ Connecté en tant que **${pseudo}** ! Vous pouvez maintenant utiliser \`/add\` sans arguments.`);
+                } else {
+                    await interaction.editReply(`❌ Échec de la connexion: ${result.split(':')[1]}\n\nVérifiez que le code est correct et qu'il n'a pas expiré.`);
+                }
+                return;
+            }
+
             if (!interaction.isChatInputCommand()) return;
 
             // Skip stale interactions (queued during restart, already expired)

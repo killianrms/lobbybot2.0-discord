@@ -35,6 +35,7 @@ services:
       - LETSENCRYPT_HOST=dashboard.killianrms.com
       - LETSENCRYPT_EMAIL=admin@killianrms.com
       - LETSENCRYPT_ACMESH_DNS_API=dns_cf
+      - EPIC_MASTER_KEY=${EPIC_MASTER_KEY}
     depends_on:
       - nginx-proxy
 

@@ -13,7 +13,18 @@ export const locales: Record<string, Record<string, string>> = {
         UNKNOWN_CMD: 'Commande inconnue.',
         ERROR: 'Une erreur est survenue.',
         SUCCESS: 'Succès',
-        LANG_SET: 'Langue définie sur'
+        LANG_SET: 'Langue définie sur',
+        LOGIN_TITLE: '🎮 Connexion Epic Games',
+        LOGIN_DESC: '**Étapes pour vous connecter :**\n\n1️⃣ Cliquez sur **"Se connecter"** et connectez-vous à Epic Games\n2️⃣ Cliquez sur **"Obtenir le code"** — la page affiche un JSON\n3️⃣ Copiez la valeur de `authorizationCode`\n4️⃣ Cliquez sur **"Entrer mon code"** et collez-le\n\n> ⚡ Si vous êtes déjà connecté, passez directement à l\'étape 2 !',
+        LOGIN_FOOTER: 'Le code expire rapidement, utilisez-le immédiatement.',
+        LOGIN_BTN_SIGNIN: 'Se connecter à Epic Games',
+        LOGIN_BTN_GET_CODE: 'Obtenir le code',
+        LOGIN_BTN_ENTER: '✏️ Entrer mon code',
+        LOGIN_MODAL_TITLE: 'Code d\'autorisation Epic Games',
+        LOGIN_MODAL_LABEL: 'Collez votre authorizationCode ici',
+        LOGIN_MODAL_PLACEHOLDER: 'ex: a1b2c3d4e5f6...',
+        LOGIN_SUCCESS: '✅ Connecté en tant que **{pseudo}** ! Vous pouvez maintenant utiliser `/add` sans arguments.',
+        LOGIN_ERROR: '❌ Échec de la connexion: {error}\n\nVérifiez que le code est correct et qu\'il n\'a pas expiré.'
     },
     en: {
         PREV: 'Previous',
@@ -29,7 +40,18 @@ export const locales: Record<string, Record<string, string>> = {
         UNKNOWN_CMD: 'Unknown command.',
         ERROR: 'An error occurred.',
         SUCCESS: 'Success',
-        LANG_SET: 'Language set to'
+        LANG_SET: 'Language set to',
+        LOGIN_TITLE: '🎮 Epic Games Login',
+        LOGIN_DESC: '**Steps to connect:**\n\n1️⃣ Click **"Sign in"** and log in to Epic Games\n2️⃣ Click **"Get code"** — the page shows a JSON\n3️⃣ Copy the value of `authorizationCode`\n4️⃣ Click **"Enter my code"** and paste it\n\n> ⚡ Already logged in? Skip directly to step 2!',
+        LOGIN_FOOTER: 'The code expires quickly, use it immediately.',
+        LOGIN_BTN_SIGNIN: 'Sign in to Epic Games',
+        LOGIN_BTN_GET_CODE: 'Get code',
+        LOGIN_BTN_ENTER: '✏️ Enter my code',
+        LOGIN_MODAL_TITLE: 'Epic Games Authorization Code',
+        LOGIN_MODAL_LABEL: 'Paste your authorizationCode here',
+        LOGIN_MODAL_PLACEHOLDER: 'e.g.: a1b2c3d4e5f6...',
+        LOGIN_SUCCESS: '✅ Logged in as **{pseudo}**! You can now use `/add` without arguments.',
+        LOGIN_ERROR: '❌ Login failed: {error}\n\nCheck that the code is correct and has not expired.'
     },
     es: {
         PREV: 'Anterior',
@@ -45,7 +67,18 @@ export const locales: Record<string, Record<string, string>> = {
         UNKNOWN_CMD: 'Comando desconocido.',
         ERROR: 'Ocurrió un error.',
         SUCCESS: 'Éxito',
-        LANG_SET: 'Idioma configurado en'
+        LANG_SET: 'Idioma configurado en',
+        LOGIN_TITLE: '🎮 Inicio de sesión Epic Games',
+        LOGIN_DESC: '**Pasos para conectarte:**\n\n1️⃣ Haz clic en **"Iniciar sesión"** y entra en Epic Games\n2️⃣ Haz clic en **"Obtener código"** — la página muestra un JSON\n3️⃣ Copia el valor de `authorizationCode`\n4️⃣ Haz clic en **"Ingresar mi código"** y pégalo\n\n> ⚡ ¿Ya conectado? ¡Ve directamente al paso 2!',
+        LOGIN_FOOTER: 'El código expira rápidamente, úsalo de inmediato.',
+        LOGIN_BTN_SIGNIN: 'Iniciar sesión en Epic Games',
+        LOGIN_BTN_GET_CODE: 'Obtener código',
+        LOGIN_BTN_ENTER: '✏️ Ingresar mi código',
+        LOGIN_MODAL_TITLE: 'Código de autorización Epic Games',
+        LOGIN_MODAL_LABEL: 'Pega tu authorizationCode aquí',
+        LOGIN_MODAL_PLACEHOLDER: 'ej: a1b2c3d4e5f6...',
+        LOGIN_SUCCESS: '✅ Conectado como **{pseudo}**. ¡Ya puedes usar `/add` sin argumentos!',
+        LOGIN_ERROR: '❌ Error al conectar: {error}\n\nVerifica que el código sea correcto y no haya expirado.'
     },
     de: {
         PREV: 'Vorherige',
@@ -61,7 +94,18 @@ export const locales: Record<string, Record<string, string>> = {
         UNKNOWN_CMD: 'Unbekannter Befehl.',
         ERROR: 'Ein Fehler ist aufgetreten.',
         SUCCESS: 'Erfolg',
-        LANG_SET: 'Sprache eingestellt auf'
+        LANG_SET: 'Sprache eingestellt auf',
+        LOGIN_TITLE: '🎮 Epic Games Anmeldung',
+        LOGIN_DESC: '**Schritte zum Verbinden:**\n\n1️⃣ Klicke auf **"Anmelden"** und melde dich bei Epic Games an\n2️⃣ Klicke auf **"Code holen"** — die Seite zeigt ein JSON\n3️⃣ Kopiere den Wert von `authorizationCode`\n4️⃣ Klicke auf **"Code eingeben"** und füge ihn ein\n\n> ⚡ Bereits angemeldet? Gehe direkt zu Schritt 2!',
+        LOGIN_FOOTER: 'Der Code läuft schnell ab, benutze ihn sofort.',
+        LOGIN_BTN_SIGNIN: 'Bei Epic Games anmelden',
+        LOGIN_BTN_GET_CODE: 'Code holen',
+        LOGIN_BTN_ENTER: '✏️ Code eingeben',
+        LOGIN_MODAL_TITLE: 'Epic Games Autorisierungscode',
+        LOGIN_MODAL_LABEL: 'Füge deinen authorizationCode hier ein',
+        LOGIN_MODAL_PLACEHOLDER: 'z.B.: a1b2c3d4e5f6...',
+        LOGIN_SUCCESS: '✅ Angemeldet als **{pseudo}**! Du kannst jetzt `/add` ohne Argumente verwenden.',
+        LOGIN_ERROR: '❌ Anmeldung fehlgeschlagen: {error}\n\nÜberprüfe, ob der Code korrekt ist und nicht abgelaufen ist.'
     }
 };
 

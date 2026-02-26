@@ -65,15 +65,18 @@ export class DiscordManager {
 
             // --- BUTTON: login_enter_code → open modal ---
             if (interaction.isButton() && interaction.customId === 'login_enter_code') {
+                const lang = await this.userManager.getLanguage(interaction.user.id).catch(() => 'en');
+                const t = (key: string) => getTranslation(lang, key);
+
                 const modal = new ModalBuilder()
                     .setCustomId('login_modal')
-                    .setTitle('Code d\'autorisation Epic Games');
+                    .setTitle(t('LOGIN_MODAL_TITLE'));
 
                 const codeInput = new TextInputBuilder()
                     .setCustomId('epic_code')
-                    .setLabel('Collez votre authorizationCode ici')
+                    .setLabel(t('LOGIN_MODAL_LABEL'))
                     .setStyle(TextInputStyle.Short)
-                    .setPlaceholder('ex: a1b2c3d4e5f6...')
+                    .setPlaceholder(t('LOGIN_MODAL_PLACEHOLDER'))
                     .setRequired(true);
 
                 const row = new ActionRowBuilder<TextInputBuilder>().addComponents(codeInput);
@@ -87,14 +90,17 @@ export class DiscordManager {
             if (interaction.isModalSubmit() && interaction.customId === 'login_modal') {
                 await interaction.deferReply({ ephemeral: true });
 
+                const lang = await this.userManager.getLanguage(interaction.user.id).catch(() => 'en');
+                const t = (key: string) => getTranslation(lang, key);
+
                 const code = interaction.fields.getTextInputValue('epic_code').trim();
                 const result = await this.userManager.handleLogin(interaction.user.id, code);
 
                 if (result.startsWith('SUCCESS')) {
                     const pseudo = result.split(':')[1];
-                    await interaction.editReply(`✅ Connecté en tant que **${pseudo}** ! Vous pouvez maintenant utiliser \`/add\` sans arguments.`);
+                    await interaction.editReply(t('LOGIN_SUCCESS').replace('{pseudo}', pseudo));
                 } else {
-                    await interaction.editReply(`❌ Échec de la connexion: ${result.split(':')[1]}\n\nVérifiez que le code est correct et qu'il n'a pas expiré.`);
+                    await interaction.editReply(t('LOGIN_ERROR').replace('{error}', result.split(':')[1] || ''));
                 }
                 return;
             }

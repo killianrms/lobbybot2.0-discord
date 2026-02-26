@@ -1,11 +1,67 @@
 import { Client } from 'fnbr';
+import axios from 'axios';
 import { DatabaseManager } from './DatabaseManager';
+
+const EG_CLIENT_ID = '3f69e56c7649492c8cc29f1af08a8a12';
+const EG_CLIENT_SECRET = 'b51ee9cb12234f50a69efa67ef53812e';
+const EG_AUTH_HEADER = `Basic ${Buffer.from(`${EG_CLIENT_ID}:${EG_CLIENT_SECRET}`).toString('base64')}`;
 
 export class UserManager {
     private db: DatabaseManager;
+    private deviceFlowSessions: Map<string, string> = new Map(); // discordId -> device_code
 
     constructor(db: DatabaseManager) {
         this.db = db;
+    }
+
+    public async initiateDeviceFlow(discordId: string): Promise<{ userCode: string; activateUrl: string }> {
+        const response = await axios.post(
+            'https://account-public-service-prod.ol.epicgames.com/account/api/oauth/deviceAuthorization',
+            '',
+            { headers: { 'Authorization': EG_AUTH_HEADER, 'Content-Type': 'application/x-www-form-urlencoded' } }
+        );
+        const { device_code, user_code, verification_uri_complete } = response.data;
+        this.deviceFlowSessions.set(discordId, device_code);
+        return {
+            userCode: user_code as string,
+            activateUrl: (verification_uri_complete as string) || `https://www.epicgames.com/id/activate?userCode=${user_code}`
+        };
+    }
+
+    public async completeDeviceFlow(discordId: string): Promise<string> {
+        const deviceCode = this.deviceFlowSessions.get(discordId);
+        if (!deviceCode) return 'ERROR:no_session';
+
+        try {
+            const tokenResponse = await axios.post(
+                'https://account-public-service-prod.ol.epicgames.com/account/api/oauth/token',
+                new URLSearchParams({
+                    grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+                    device_code: deviceCode
+                }).toString(),
+                { headers: { 'Authorization': EG_AUTH_HEADER, 'Content-Type': 'application/x-www-form-urlencoded' } }
+            );
+
+            const { access_token, account_id, displayName } = tokenResponse.data;
+
+            const deviceAuthResponse = await axios.post(
+                `https://account-public-service-prod.ol.epicgames.com/account/api/public/account/${account_id}/deviceAuth`,
+                {},
+                { headers: { 'Authorization': `Bearer ${access_token}` } }
+            );
+
+            await this.db.saveUser(discordId, displayName, deviceAuthResponse.data);
+            this.deviceFlowSessions.delete(discordId);
+            return `SUCCESS:${displayName}`;
+        } catch (e: any) {
+            const errorCode = e.response?.data?.errorCode || '';
+            if (errorCode.includes('authorization_pending')) return 'PENDING';
+            if (errorCode.includes('expired')) {
+                this.deviceFlowSessions.delete(discordId);
+                return 'EXPIRED';
+            }
+            return `ERROR:${e.response?.data?.errorMessage || e.message}`;
+        }
     }
 
     public async handleLogin(discordId: string, authCode: string): Promise<string> {

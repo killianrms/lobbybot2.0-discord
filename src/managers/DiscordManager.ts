@@ -63,42 +63,22 @@ export class DiscordManager {
         // INTERACTION HANDLER
         this.client.on('interactionCreate', async (interaction) => {
 
-            // --- BUTTON: login_enter_code → open modal ---
-            if (interaction.isButton() && interaction.customId === 'login_enter_code') {
-                const lang = await this.userManager.getLanguage(interaction.user.id).catch(() => 'en');
-                const t = (key: string) => getTranslation(lang, key);
-
-                const modal = new ModalBuilder()
-                    .setCustomId('login_modal')
-                    .setTitle(t('LOGIN_MODAL_TITLE'));
-
-                const codeInput = new TextInputBuilder()
-                    .setCustomId('epic_code')
-                    .setLabel(t('LOGIN_MODAL_LABEL'))
-                    .setStyle(TextInputStyle.Short)
-                    .setPlaceholder(t('LOGIN_MODAL_PLACEHOLDER'))
-                    .setRequired(true);
-
-                const row = new ActionRowBuilder<TextInputBuilder>().addComponents(codeInput);
-                modal.addComponents(row);
-
-                await interaction.showModal(modal);
-                return;
-            }
-
-            // --- MODAL SUBMIT: login_modal → process auth code ---
-            if (interaction.isModalSubmit() && interaction.customId === 'login_modal') {
+            // --- BUTTON: login_check_device → poll device flow ---
+            if (interaction.isButton() && interaction.customId === 'login_check_device') {
                 await interaction.deferReply({ ephemeral: true });
 
                 const lang = await this.userManager.getLanguage(interaction.user.id).catch(() => 'en');
                 const t = (key: string) => getTranslation(lang, key);
 
-                const code = interaction.fields.getTextInputValue('epic_code').trim();
-                const result = await this.userManager.handleLogin(interaction.user.id, code);
+                const result = await this.userManager.completeDeviceFlow(interaction.user.id);
 
                 if (result.startsWith('SUCCESS')) {
                     const pseudo = result.split(':')[1];
                     await interaction.editReply(t('LOGIN_SUCCESS').replace('{pseudo}', pseudo));
+                } else if (result === 'PENDING') {
+                    await interaction.editReply(t('LOGIN_PENDING'));
+                } else if (result === 'EXPIRED') {
+                    await interaction.editReply(t('LOGIN_EXPIRED'));
                 } else {
                     await interaction.editReply(t('LOGIN_ERROR').replace('{error}', result.split(':')[1] || ''));
                 }

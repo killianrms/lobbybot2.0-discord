@@ -96,6 +96,20 @@ export class DatabaseManager {
         }
     }
 
+    private encryptSecret(plaintext: string): string | null {
+        const masterKey = process.env.EPIC_MASTER_KEY;
+        if (!masterKey) {
+            console.warn('[Database] EPIC_MASTER_KEY not set, cannot encrypt secret');
+            return null;
+        }
+        const iv = crypto.randomBytes(16);
+        const key = crypto.createHash('sha256').update(masterKey).digest();
+        const cipher = crypto.createCipheriv('aes-256-cbc', key, iv);
+        let encrypted = cipher.update(plaintext, 'utf8', 'hex');
+        encrypted += cipher.final('hex');
+        return `${iv.toString('hex')}:${encrypted}`;
+    }
+
     private decryptSecret(encrypted: string | null): string | null {
         if (!encrypted) return null;
         const masterKey = process.env.EPIC_MASTER_KEY;
@@ -187,20 +201,24 @@ export class DatabaseManager {
     }
 
     public async addBot(account: BotAccount): Promise<void> {
+        const secretEnc = account.deviceAuth?.secret
+            ? this.encryptSecret(account.deviceAuth.secret)
+            : null;
+
         await this.pool.query(`
-            INSERT INTO epic_accounts (email, pseudo, device_id, account_id, secret)
+            INSERT INTO epic_accounts (email, pseudo, device_id, account_id, secret_enc)
             VALUES ($1, $2, $3, $4, $5)
             ON CONFLICT (email) DO UPDATE SET
                 pseudo = EXCLUDED.pseudo,
                 device_id = EXCLUDED.device_id,
                 account_id = EXCLUDED.account_id,
-                secret = EXCLUDED.secret
+                secret_enc = EXCLUDED.secret_enc
         `, [
             account.email,
             account.pseudo,
             account.deviceAuth?.deviceId,
             account.deviceAuth?.accountId,
-            account.deviceAuth?.secret
+            secretEnc
         ]);
     }
 

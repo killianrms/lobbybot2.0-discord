@@ -14,6 +14,7 @@ export class BotManager {
     private sentMessageIds: Map<string, Set<string>> = new Map();
     private adminManager: AdminManager;
     private commandManager: CommandManager;
+    private pollingInterval: ReturnType<typeof setInterval> | null = null;
 
     // Actions
     private partyActions: PartyActions;
@@ -144,6 +145,57 @@ export class BotManager {
             await this.stopBot(email);
         }
         console.log('✅ Tous les bots ont été arrêtés');
+    }
+
+    startPolling(intervalMs: number = 30000): void {
+        console.log(`[BotManager] 🔁 Synchronisation BD toutes les ${intervalMs / 1000}s`);
+        this.pollingInterval = setInterval(() => this.syncWithDatabase(), intervalMs);
+    }
+
+    stopPolling(): void {
+        if (this.pollingInterval) {
+            clearInterval(this.pollingInterval);
+            this.pollingInterval = null;
+        }
+    }
+
+    private async syncWithDatabase(): Promise<void> {
+        try {
+            const dbAccounts = await this.dbManager.getAllBots();
+            const dbEmailSet = new Set(dbAccounts.map(a => a.email));
+
+            // 1. Arrêter les bots supprimés de la BD
+            for (const email of this.bots.keys()) {
+                if (!dbEmailSet.has(email)) {
+                    const pseudo = this.bots.get(email)?.account?.pseudo || email;
+                    console.log(`[BotManager] 🗑️  Bot supprimé de la BD: ${pseudo} → arrêt`);
+                    await this.stopBot(email);
+                }
+            }
+
+            // 2. Lancer les nouveaux bots / redémarrer si credentials changés
+            for (const account of dbAccounts) {
+                const running = this.bots.get(account.email);
+
+                if (!running) {
+                    console.log(`[BotManager] 🆕 Nouveau bot en BD: ${account.pseudo || account.email} → lancement`);
+                    await this.launchBot(account);
+                } else {
+                    const currentSecret = running.account.deviceAuth?.secret;
+                    const newSecret = account.deviceAuth?.secret;
+                    const currentDeviceId = running.account.deviceAuth?.deviceId;
+                    const newDeviceId = account.deviceAuth?.deviceId;
+
+                    if (currentSecret !== newSecret || currentDeviceId !== newDeviceId) {
+                        console.log(`[BotManager] 🔄 Credentials changés: ${account.pseudo || account.email} → redémarrage`);
+                        await this.stopBot(account.email);
+                        await this.launchBot(account);
+                    }
+                }
+            }
+        } catch (error: any) {
+            console.error('[BotManager] ❌ Erreur sync BD:', error.message);
+        }
     }
 
     async addNewBot(account: BotAccount): Promise<void> {

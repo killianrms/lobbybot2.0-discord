@@ -33,6 +33,7 @@ async function main() {
 
     // 2. Start Services
     await botManager.launchAllBots();
+    botManager.startPolling(30000); // sync DB every 30s
     await discordManager.start(process.env.DISCORD_TOKEN || '');
 }
 

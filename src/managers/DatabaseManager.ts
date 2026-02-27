@@ -118,9 +118,9 @@ export class DatabaseManager {
             return null;
         }
         try {
-            // Format: iv_hex:ciphertext_hex (AES-256-CBC, key = SHA-256(EPIC_MASTER_KEY))
+            // Format 1: AES-256-CBC → "iv_hex:ciphertext_hex" (Node.js encrypted)
             const parts = encrypted.split(':');
-            if (parts.length === 2) {
+            if (parts.length === 2 && /^[0-9a-f]{32}$/i.test(parts[0])) {
                 const iv = Buffer.from(parts[0], 'hex');
                 const key = crypto.createHash('sha256').update(masterKey).digest();
                 const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
@@ -128,9 +128,63 @@ export class DatabaseManager {
                 decrypted += decipher.final('utf8');
                 return decrypted;
             }
+
+            // Format 2: Fernet token (Python cryptography library) — starts with gAAAAA (0x80)
+            return this.decryptFernet(encrypted, masterKey);
+
         } catch (e: any) {
             console.error('[Database] Decryption failed:', e.message);
         }
+        return null;
+    }
+
+    /**
+     * Decrypts a Fernet token (Python cryptography.fernet.Fernet).
+     * Key derivation: SHA-256(masterKey) → bytes[0:16] = HMAC key, bytes[16:32] = AES-128-CBC key.
+     * Also tries masterKey as a direct base64url-encoded 32-byte Fernet key.
+     */
+    private decryptFernet(token: string, masterKey: string): string | null {
+        // Decode base64url (use replace for compatibility with older Node.js)
+        const tokenBytes = Buffer.from(
+            token.replace(/-/g, '+').replace(/_/g, '/'),
+            'base64'
+        );
+
+        if (tokenBytes.length < 57 || tokenBytes[0] !== 0x80) return null;
+
+        const iv = tokenBytes.slice(9, 25);
+        const ciphertext = tokenBytes.slice(25, tokenBytes.length - 32);
+        const givenHmac = tokenBytes.slice(tokenBytes.length - 32);
+        const hmacInput = tokenBytes.slice(0, tokenBytes.length - 32);
+
+        // Build key candidates to try
+        const keyCandidates: Buffer[] = [];
+
+        // Candidate 1: SHA-256(masterKey) — most common Python derivation
+        keyCandidates.push(crypto.createHash('sha256').update(masterKey).digest());
+
+        // Candidate 2: masterKey used directly as base64url-encoded 32-byte Fernet key
+        try {
+            const directKey = Buffer.from(masterKey.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
+            if (directKey.length === 32) keyCandidates.push(directKey);
+        } catch { /* not a valid base64 key */ }
+
+        for (const keyBytes of keyCandidates) {
+            const signingKey = keyBytes.slice(0, 16);
+            const encryptionKey = keyBytes.slice(16, 32);
+
+            const expectedHmac = crypto.createHmac('sha256', signingKey).update(hmacInput).digest();
+            if (!crypto.timingSafeEqual(givenHmac, expectedHmac)) continue;
+
+            try {
+                const decipher = crypto.createDecipheriv('aes-128-cbc', encryptionKey, iv);
+                const decrypted = Buffer.concat([decipher.update(ciphertext), decipher.final()]);
+                console.log('[Database] Fernet decryption successful');
+                return decrypted.toString('utf8');
+            } catch { /* wrong key, try next */ }
+        }
+
+        console.error('[Database] Fernet decryption failed — HMAC mismatch (wrong EPIC_MASTER_KEY?)');
         return null;
     }
 
@@ -181,11 +235,6 @@ export class DatabaseManager {
 
     public async getAllBots(): Promise<BotAccount[]> {
         const res = await this.pool.query('SELECT * FROM epic_accounts WHERE is_active IS DISTINCT FROM false');
-        if (res.rows.length > 0) {
-            const sample = res.rows[0].secret_enc ?? res.rows[0].secret ?? 'NULL';
-            // Temporary: log format of encrypted value to identify correct decryption scheme
-            console.log(`[Database] secret_enc sample (60 chars): "${String(sample).substring(0, 60)}"`);
-        }
         return res.rows.map(row => ({
             email: row.email,
             pseudo: row.pseudo,

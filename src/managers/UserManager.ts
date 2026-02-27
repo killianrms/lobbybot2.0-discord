@@ -15,11 +15,11 @@ const EG_USER_AGENT = 'EpicGamesLauncher/15.17.1-27211996+++Portal+Release-Live 
 
 // Clients to try (in order) for deviceAuthorization endpoint
 const DEVICE_FLOW_CLIENTS = [
-    ['34a02cf8f4414e29b15921876da36f9a', 'daafbccc737745039dffe53d94fc76cf'], // launcherAppClient2
-    ['ec684b8c687f479fadea3cb2ad83f5c6', 'e1f31c211f28413186262d37a13fc84d'], // fortnitePCGameClient
-    ['3446cd72694c4a4485d81b77adbb2141', '9209d4a5e25a457fb9b07489d313b41a'], // fortniteIOSGameClient
-    ['3f69e56c7649492c8cc29f1af08a8a12', 'b51ee9cb12234f50a69efa67ef53812e'], // fortniteAndroidGameClient
-    ['875a3b57d3a640a6b7f9b4e883463ab4', ''],                                   // epicgamesComClient (public)
+    ['98f7e42c2e3a4f86a74eb43fbb41ed39', '0a2449a2-001a-451e-afec-3e812901c4d7'], // kairosPCGameClient (preferred)
+    ['34a02cf8f4414e29b15921876da36f9a', 'daafbccc737745039dffe53d94fc76cf'],       // launcherAppClient2
+    ['ec684b8c687f479fadea3cb2ad83f5c6', 'e1f31c211f28413186262d37a13fc84d'],       // fortnitePCGameClient
+    ['3446cd72694c4a4485d81b77adbb2141', '9209d4a5e25a457fb9b07489d313b41a'],       // fortniteIOSGameClient
+    ['3f69e56c7649492c8cc29f1af08a8a12', 'b51ee9cb12234f50a69efa67ef53812e'],       // fortniteAndroidGameClient
 ] as const;
 
 interface DeviceSession { deviceCode: string; authHeader: string; }
@@ -46,12 +46,12 @@ export class UserManager {
                 for (const body of ['', 'scope=basic_profile']) {
                     try {
                         const response = await axios.post(EG_DEVICE_AUTH_URL, body, { headers, timeout: 6000 });
-                        const { device_code, user_code, verification_uri_complete } = response.data;
+                        const { device_code, user_code } = response.data;
                         this.deviceFlowSessions.set(discordId, { deviceCode: device_code, authHeader });
                         console.log(`[DeviceFlow] Success with client ${id}`);
                         return {
                             userCode: user_code as string,
-                            activateUrl: (verification_uri_complete as string) || `https://www.epicgames.com/id/activate?userCode=${user_code}`
+                            activateUrl: `https://www.epicgames.com/id/activate?user_code=${user_code}&client_id=${id}`
                         };
                     } catch { /* try next body */ }
                 }

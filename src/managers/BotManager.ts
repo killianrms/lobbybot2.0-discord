@@ -81,6 +81,19 @@ export class BotManager {
     private setupBotEvents(bot: Client, account: BotAccount) {
         const identifier = account.pseudo || account.email;
 
+        // Bot prêt : définir le statut
+        bot.on('ready', async () => {
+            try {
+                await bot.user?.fetchSelf();
+                bot.setStatus("Utilisez le code créateur : aeroz");
+                console.log(`[${identifier}] ✅ Bot connecté en tant que ${bot.user?.self?.displayName || 'Unknown'}`);
+                console.log(`[${identifier}] 🎮 Status défini : "Utilisez le code créateur : aeroz"`);
+            } catch (error: any) {
+                console.error(`[${identifier}] ❌ Erreur ready:`, error.message);
+            }
+        });
+
+        // Accepter les demandes d'ami
         (bot as any).on('friend:request', async (pendingFriend: any) => {
             try {
                 await pendingFriend.accept();
@@ -90,8 +103,18 @@ export class BotManager {
             }
         });
 
+        // Membre rejoint le lobby
         (bot as any).on('party:member:joined', async (member: any) => {
-            if (member.id === bot.user?.self?.id) return;
+            if (member.id === bot.user?.self?.id) {
+                // Le bot lui-même vient de rejoindre un lobby
+                if (!this.cosmeticManagers.has(account.email)) {
+                    const cosmeticManager = new CosmeticManager(bot);
+                    this.cosmeticManagers.set(account.email, cosmeticManager);
+                    console.log(`[${identifier}] 🎨 CosmeticManager initialisé`);
+                }
+                return;
+            }
+            // Un autre joueur rejoint : lui envoyer une demande d'ami
             try {
                 await member.addFriend();
                 console.log(`[${identifier}] ➕ Demande d'ami envoyée à ${member.displayName}`);
@@ -99,7 +122,59 @@ export class BotManager {
             }
         });
 
-        // HANDLE CHAT COMMANDS
+        // Commandes depuis le chat du LOBBY (messages encodés en base64)
+        (bot as any).on('party:member:message', async (message: any) => {
+            if (message.author.id === bot.user?.self?.id) return;
+
+            let realMessage = message.content;
+            try {
+                const decoded = Buffer.from(message.content, 'base64').toString('utf-8');
+                const cleaned = decoded.replace(/\0+$/, '');
+                const parsed = JSON.parse(cleaned);
+                realMessage = parsed.msg || message.content;
+                console.log(`[${identifier}] 💬 [LOBBY] ${message.author.displayName}: ${realMessage}`);
+            } catch (e) {
+                console.log(`[${identifier}] 💬 [LOBBY] ${message.author.displayName}: ${message.content}`);
+            }
+
+            const fakeMessage = {
+                content: realMessage,
+                author: message.author,
+                reply: async (text: string) => {
+                    try { await message.reply(text); } catch (e) {}
+                }
+            };
+
+            await this.commandManager.handleMessage(bot, fakeMessage);
+        });
+
+        // Commandes depuis les MESSAGES PRIVÉS (DM)
+        (bot as any).on('friend:message', async (message: any) => {
+            if (message.author.id === bot.user?.self?.id) return;
+
+            // Filtrer les échos de nos propres messages
+            const sentIds = this.sentMessageIds.get(account.email);
+            if (sentIds && sentIds.has(message.id)) {
+                sentIds.delete(message.id);
+                return;
+            }
+
+            console.log(`[${identifier}] 💬 [DM] ${message.author.displayName}: ${message.content}`);
+            await this.commandManager.handleMessage(bot, message);
+        });
+
+        // Accepter les invitations de groupe
+        (bot as any).on('party:invitation', async (invitation: any) => {
+            console.log(`[${identifier}] 📨 Invitation de ${invitation.sender?.displayName}`);
+            try {
+                await invitation.accept();
+                console.log(`[${identifier}] ✅ Invitation acceptée`);
+            } catch (error: any) {
+                console.error(`[${identifier}] ❌ Erreur invitation:`, error.message);
+            }
+        });
+
+        // HANDLE CHAT COMMANDS (fallback pour certaines versions de fnbr)
         (bot as any).on('message:chat', async (message: any) => {
             await this.commandManager.handleMessage(bot, message);
         });

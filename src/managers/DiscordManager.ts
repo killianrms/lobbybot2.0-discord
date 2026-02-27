@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType } from 'discord.js';
+import { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, ModalBuilder, TextInputBuilder, TextInputStyle } from 'discord.js';
 import { BotManager } from './BotManager';
 import { UserManager } from './UserManager';
 import { APIManager } from './APIManager';
@@ -34,6 +34,17 @@ export class DiscordManager {
         }
     }
 
+    private async getUserLang(userId: string): Promise<string> {
+        try {
+            return await Promise.race([
+                this.userManager.getLanguage(userId),
+                new Promise<string>((resolve) => setTimeout(() => resolve('en'), 1500))
+            ]);
+        } catch {
+            return 'en';
+        }
+    }
+
     private setupEvents(): void {
 
         // Prevent unhandled error events from crashing the process
@@ -62,6 +73,59 @@ export class DiscordManager {
 
         // INTERACTION HANDLER
         this.client.on('interactionCreate', async (interaction) => {
+
+            // --- BOUTONS ---
+            if (interaction.isButton()) {
+                if (interaction.customId === 'login_enter_code') {
+                    const lang = await this.getUserLang(interaction.user.id);
+                    const t = (key: string) => getTranslation(lang, key);
+
+                    const modal = new ModalBuilder()
+                        .setCustomId('login_modal')
+                        .setTitle(t('LOGIN_MODAL_TITLE'));
+
+                    const codeInput = new TextInputBuilder()
+                        .setCustomId('login_code_input')
+                        .setLabel(t('LOGIN_MODAL_LABEL'))
+                        .setPlaceholder(t('LOGIN_MODAL_PLACEHOLDER'))
+                        .setStyle(TextInputStyle.Short)
+                        .setMinLength(10)
+                        .setMaxLength(64)
+                        .setRequired(true);
+
+                    modal.addComponents(new ActionRowBuilder<TextInputBuilder>().addComponents(codeInput));
+                    await interaction.showModal(modal);
+                }
+                return;
+            }
+
+            // --- MODALS ---
+            if (interaction.isModalSubmit()) {
+                if (interaction.customId === 'login_modal') {
+                    await interaction.deferReply({ ephemeral: true });
+
+                    const lang = await this.getUserLang(interaction.user.id);
+                    const t = (key: string) => getTranslation(lang, key);
+
+                    const code = interaction.fields.getTextInputValue('login_code_input').trim();
+                    const result = await this.userManager.handleLogin(interaction.user.id, code);
+
+                    if (result.startsWith('SUCCESS')) {
+                        const pseudo = result.split(':')[1];
+                        await interaction.editReply(
+                            t('LOGIN_MODAL_SUCCESS').replace('{pseudo}', pseudo)
+                        );
+                    } else {
+                        const reason = result.split(':').slice(1).join(':') || result;
+                        await interaction.editReply(
+                            t('LOGIN_MODAL_ERROR').replace('{reason}', reason)
+                        );
+                    }
+                }
+                return;
+            }
+
+            // --- SLASH COMMANDS ---
             if (!interaction.isChatInputCommand()) return;
 
             // Skip stale interactions (queued during restart, already expired)
@@ -71,15 +135,7 @@ export class DiscordManager {
             if (!command) return;
 
             // Fetch language with a timeout to preserve the 3s deferReply window
-            let userLang = 'en';
-            try {
-                userLang = await Promise.race([
-                    this.userManager.getLanguage(interaction.user.id),
-                    new Promise<string>((resolve) => setTimeout(() => resolve('en'), 1500))
-                ]);
-            } catch {
-                userLang = 'en';
-            }
+            const userLang = await this.getUserLang(interaction.user.id);
 
             try {
                 await command.execute(interaction, {

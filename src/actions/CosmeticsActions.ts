@@ -68,4 +68,24 @@ export class CosmeticsActions {
              return `❌ Erreur emote: ${e.message}`;
         }
     }
+
+    async clearEmote(client: Client): Promise<string> {
+        if (!client.party) return '❌ Le bot n\'est pas dans un groupe.';
+        try {
+            await client.party.me.clearEmote();
+            return '⏹️ Danse arrêtée.';
+        } catch (e: any) {
+            return `❌ Erreur: ${e.message}`;
+        }
+    }
+
+    async setLevel(client: Client, level: number): Promise<string> {
+        if (!client.party) return '❌ Le bot n\'est pas dans un groupe.';
+        try {
+            await client.party.me.setLevel(level);
+            return `✅ Niveau défini sur : **${level}**`;
+        } catch (e: any) {
+            return `❌ Erreur: ${e.message}`;
+        }
+    }
 }

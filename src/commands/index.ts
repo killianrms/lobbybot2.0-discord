@@ -14,6 +14,7 @@ import { ListCommand } from './ListCommand';
 import { SacCommand } from './SacCommand';
 import { LockerCommand } from './LockerCommand';
 import { SetLanguageCommand } from './SetLanguageCommand';
+import { HelpCommand } from './HelpCommand';
 
 export const CommandList: Command[] = [
     LoginCommand,
@@ -30,7 +31,8 @@ export const CommandList: Command[] = [
     ListCommand,
     SacCommand,
     LockerCommand,
-    SetLanguageCommand
+    SetLanguageCommand,
+    HelpCommand
 ];
 
 export { Command } from './Command';

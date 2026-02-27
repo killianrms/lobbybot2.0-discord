@@ -2,15 +2,22 @@ import axios from 'axios';
 import { Client } from 'fnbr';
 import { DatabaseManager } from './DatabaseManager';
 
-const EPIC_TOKEN_URL    = 'https://account-public-service-prod.ol.epicgames.com/account/api/oauth/token';
+const EPIC_TOKEN_URL       = 'https://account-public-service-prod.ol.epicgames.com/account/api/oauth/token';
 const EPIC_DEVICE_CODE_URL = 'https://account-public-service-prod.ol.epicgames.com/account/api/oauth/deviceAuthorization';
-const EPIC_EXCHANGE_URL = 'https://account-public-service-prod.ol.epicgames.com/account/api/oauth/exchange';
+const EPIC_EXCHANGE_URL    = 'https://account-public-service-prod.ol.epicgames.com/account/api/oauth/exchange';
 
-// launcherAppClient2 — le seul client Epic qui supporte le device code flow
-const LAUNCHER_CLIENT_ID     = '34a02cf8f4414e29b15921876da36f9a';
-const LAUNCHER_CLIENT_SECRET = 'daafbccc737745039dffe53d94fc76cf';
+// Clients à essayer dans l'ordre pour le device code flow (credentials complets depuis fnbr)
+const DEVICE_FLOW_CLIENTS = [
+    { id: '98f7e42c2e3a4f86a74eb43fbb41ed39', secret: '0a2449a2-001a-451e-afec-3e812901c4d7' }, // fortniteNewSwitchGameClient
+    { id: '3446cd72694c4a4485d81b77adbb2141', secret: '9209d4a5e25a457fb9b07489d313b41a' }, // fortniteIOSGameClient
+    { id: '3f69e56c7649492c8cc29f1af08a8a12', secret: 'b51ee9cb12234f50a69efa67ef53812e' }, // fortniteAndroidGameClient
+    { id: '34a02cf8f4414e29b15921876da36f9a', secret: 'daafbccc737745039dffe53d94fc76cf' }, // launcherAppClient2
+    { id: 'ec684b8c687f479fadea3cb2ad83f5c6', secret: 'e1f31c211f28413186262d37a13fc84d' }, // fortnitePCGameClient
+];
 
 export interface DeviceFlowInfo {
+    clientId: string;
+    clientSecret: string;
     userCode: string;
     deviceCode: string;
     activationUrl: string;
@@ -32,33 +39,41 @@ export class UserManager {
      * Retourne null si Epic refuse (on bascule vers le flow manuel).
      */
     public async initiateDeviceFlow(): Promise<DeviceFlowInfo | null> {
-        try {
-            const basicAuth = Buffer.from(`${LAUNCHER_CLIENT_ID}:${LAUNCHER_CLIENT_SECRET}`).toString('base64');
+        for (const client of DEVICE_FLOW_CLIENTS) {
+            try {
+                const basicAuth = Buffer.from(`${client.id}:${client.secret}`).toString('base64');
 
-            const resp = await axios.post(
-                EPIC_DEVICE_CODE_URL,
-                'scope=basic_profile+friends_list+openid+presence',
-                {
-                    headers: {
-                        'Authorization': `Basic ${basicAuth}`,
-                        'Content-Type': 'application/x-www-form-urlencoded',
-                    },
-                    timeout: 10_000,
-                }
-            );
+                const resp = await axios.post(
+                    EPIC_DEVICE_CODE_URL,
+                    'scope=basic_profile+friends_list+openid+presence',
+                    {
+                        headers: {
+                            'Authorization': `Basic ${basicAuth}`,
+                            'Content-Type': 'application/x-www-form-urlencoded',
+                        },
+                        timeout: 10_000,
+                    }
+                );
 
-            const d = resp.data;
-            return {
-                userCode:      d.user_code,
-                deviceCode:    d.device_code,
-                activationUrl: `https://www.epicgames.com/id/activate?userCode=${d.user_code}`,
-                expiresIn:     d.expires_in  ?? 600,
-                interval:      d.interval    ?? 5,
-            };
-        } catch (e: any) {
-            console.error('[UserManager] Device flow init failed:', e.response?.data ?? e.message);
-            return null;
+                const d = resp.data;
+                console.log(`[UserManager] Device flow OK avec client ${client.id}`);
+                return {
+                    clientId:     client.id,
+                    clientSecret: client.secret,
+                    userCode:     d.user_code,
+                    deviceCode:   d.device_code,
+                    // URL format avec client_id visible (comme confirmé fonctionnel)
+                    activationUrl: `https://www.epicgames.com/id/login?user_code=${d.user_code}&client_id=${client.id}`,
+                    expiresIn:    d.expires_in ?? 600,
+                    interval:     d.interval   ?? 5,
+                };
+            } catch (e: any) {
+                console.log(`[UserManager] Device flow 401 avec client ${client.id}`);
+            }
         }
+
+        console.error('[UserManager] Device flow échoué sur tous les clients → fallback manuel');
+        return null;
     }
 
     /**
@@ -69,8 +84,8 @@ export class UserManager {
      *   'SUCCESS:pseudo'   → connecté
      *   'ERROR:...'        → autre erreur
      */
-    public async pollDeviceFlow(discordId: string, deviceCode: string): Promise<string> {
-        const basicAuth = Buffer.from(`${LAUNCHER_CLIENT_ID}:${LAUNCHER_CLIENT_SECRET}`).toString('base64');
+    public async pollDeviceFlow(discordId: string, deviceCode: string, clientId: string, clientSecret: string): Promise<string> {
+        const basicAuth = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
 
         try {
             // Récupère le token via device_code

@@ -17,17 +17,17 @@ export const AdminCommand: Command = {
                 .addStringOption(option => option.setName('secret').setDescription('Secret').setRequired(true))
         ) as any,
 
+    ephemeral: true,
+
     async execute(interaction: ChatInputCommandInteraction, context: CommandContext, userLang: string) {
         if (interaction.user.id !== '335755692134891520') {
-            await interaction.reply({ content: '⛔ Accès refusé.', ephemeral: true });
+            await interaction.editReply({ content: '⛔ Accès refusé.' });
             return;
         }
 
         const subcommand = interaction.options.getSubcommand();
 
         if (subcommand === 'addbot') {
-            await interaction.deferReply({ ephemeral: true });
-
             const newBot = {
                 pseudo: interaction.options.getString('pseudo', true),
                 email: interaction.options.getString('email', true),

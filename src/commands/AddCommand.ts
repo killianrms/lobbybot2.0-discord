@@ -14,8 +14,6 @@ export const AddCommand: Command = {
     async execute(interaction: ChatInputCommandInteraction, context: CommandContext, userLang: string) {
         const target = interaction.options.getString('pseudo');
 
-        await interaction.deferReply();
-
         if (target) {
             // LEGACY FLOW
             const result = await context.botManager.addFriendOnAvailableBot(target);

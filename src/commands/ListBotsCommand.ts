@@ -7,15 +7,15 @@ export const ListBotsCommand: Command = {
         .setName('listbots')
         .setDescription('Affiche la liste des bots connectés'),
 
+    ephemeral: true,
+
     async execute(interaction: ChatInputCommandInteraction, context: CommandContext, userLang: string) {
         const bots = context.botManager.getActiveBots().filter(b => b.isConnected);
 
         if (bots.length === 0) {
-            await interaction.reply(getTranslation(userLang, 'NO_BOTS'));
+            await interaction.editReply(getTranslation(userLang, 'NO_BOTS'));
             return;
         }
-
-        await interaction.deferReply({ ephemeral: true });
 
         // Pagination Logic
         const ITEMS_PER_PAGE = 25; // 25 bots per page

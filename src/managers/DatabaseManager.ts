@@ -167,6 +167,11 @@ export class DatabaseManager {
 
     public async getAllBots(): Promise<BotAccount[]> {
         const res = await this.pool.query('SELECT * FROM epic_accounts WHERE is_active IS DISTINCT FROM false');
+        if (res.rows.length > 0) {
+            const sample = res.rows[0].secret_enc ?? res.rows[0].secret ?? 'NULL';
+            // Temporary: log format of encrypted value to identify correct decryption scheme
+            console.log(`[Database] secret_enc sample (60 chars): "${String(sample).substring(0, 60)}"`);
+        }
         return res.rows.map(row => ({
             email: row.email,
             pseudo: row.pseudo,

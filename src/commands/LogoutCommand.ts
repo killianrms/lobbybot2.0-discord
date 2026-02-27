@@ -6,8 +6,9 @@ export const LogoutCommand: Command = {
         .setName('logout')
         .setDescription('Se déconnecter et supprimer ses données'),
 
+    ephemeral: true,
+
     async execute(interaction: ChatInputCommandInteraction, context: CommandContext, userLang: string) {
-        await interaction.deferReply({ ephemeral: true });
         await context.userManager.logout(interaction.user.id);
         await interaction.editReply('🔒 Vous avez été déconnecté et vos données ont été supprimées.');
     }

@@ -7,7 +7,6 @@ export const ShopCommand: Command = {
         .setDescription('Voir la boutique du jour'),
 
     async execute(interaction: ChatInputCommandInteraction, context: CommandContext, userLang: string) {
-        await interaction.deferReply();
         const shop = await context.apiManager.getShop(userLang);
 
         if (shop && shop.length > 0) {

@@ -7,8 +7,9 @@ export const ListCommand: Command = {
         .setName('list')
         .setDescription('Affiche votre liste d\'amis (avec pagination)'),
 
+    ephemeral: true,
+
     async execute(interaction: ChatInputCommandInteraction, context: CommandContext, userLang: string) {
-        await interaction.deferReply({ ephemeral: true });
         const friends = await context.userManager.getFriends(interaction.user.id);
 
         if (!friends) {

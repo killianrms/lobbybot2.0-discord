@@ -7,7 +7,6 @@ export const MapCommand: Command = {
         .setDescription('Voir la carte actuelle'),
 
     async execute(interaction: ChatInputCommandInteraction, context: CommandContext, userLang: string) {
-        await interaction.deferReply();
         const mapUrl = await context.apiManager.getMap();
         if (mapUrl) {
             await interaction.editReply({ files: [mapUrl] });

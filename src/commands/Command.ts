@@ -11,5 +11,6 @@ export interface CommandContext {
 
 export interface Command {
     data: SlashCommandBuilder | SlashCommandSubcommandsOnlyBuilder | any;
+    ephemeral?: boolean; // if true, DiscordManager defers as ephemeral; default = false (public)
     execute(interaction: ChatInputCommandInteraction, context: CommandContext, userLang: string): Promise<void>;
 }

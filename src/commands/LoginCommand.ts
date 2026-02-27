@@ -5,7 +5,6 @@ import {
     ActionRowBuilder,
     ButtonBuilder,
     ButtonStyle,
-    MessageFlags
 } from 'discord.js';
 import { Command, CommandContext } from './Command';
 import { getTranslation } from '../utils/locales';
@@ -15,10 +14,10 @@ export const LoginCommand: Command = {
         .setName('login')
         .setDescription('Connect your Epic Games account / Connecter votre compte Epic Games'),
 
+    ephemeral: true,
+
     async execute(interaction: ChatInputCommandInteraction, context: CommandContext, userLang: string) {
         const t = (key: string) => getTranslation(userLang, key);
-
-        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
         try {
             // Try the device authorization flow (1-click)

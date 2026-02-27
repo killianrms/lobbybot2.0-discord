@@ -7,7 +7,6 @@ export const NewsCommand: Command = {
         .setDescription('Voir les actualités'),
 
     async execute(interaction: ChatInputCommandInteraction, context: CommandContext, userLang: string) {
-        await interaction.deferReply();
         const news = await context.apiManager.getNews();
         if (news && news.length > 0) {
             const embeds = news.slice(0, 3).map((n: any) =>

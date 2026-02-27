@@ -17,12 +17,13 @@ export const SetLanguageCommand: Command = {
                     { name: 'Deutsch', value: 'de' }
                 )),
 
+    ephemeral: true,
+
     async execute(interaction: ChatInputCommandInteraction, context: CommandContext, userLang: string) {
         const lang = interaction.options.getString('lang');
         if (lang) {
-            // Update in DB
             await context.userManager.setLanguage(interaction.user.id, lang);
-            await interaction.reply({ content: `✅ ${getTranslation(lang, 'LANG_SET')} **${lang}** (Sauvegardé).`, ephemeral: true });
+            await interaction.editReply(`✅ ${getTranslation(lang, 'LANG_SET')} **${lang}** (Sauvegardé).`);
         }
     }
 };

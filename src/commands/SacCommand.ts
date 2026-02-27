@@ -11,8 +11,9 @@ export const SacCommand: Command = {
                 .setDescription('Le code créateur (défaut: aeroz)')
                 .setRequired(false)),
 
+    ephemeral: true,
+
     async execute(interaction: ChatInputCommandInteraction, context: CommandContext, userLang: string) {
-        await interaction.deferReply({ ephemeral: true });
         const code = interaction.options.getString('code') || 'aeroz';
 
         const result = await context.userManager.setAffiliate(interaction.user.id, code);

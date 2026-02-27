@@ -130,18 +130,25 @@ export class DiscordManager {
 
             if (!interaction.isChatInputCommand()) return;
 
-            // Skip stale interactions (queued during restart, already expired)
-            if (Date.now() - interaction.createdTimestamp > 1500) return;
+            // Skip interactions queued during restart (already expired on Discord side)
+            if (Date.now() - interaction.createdTimestamp > 2500) return;
 
             const command = CommandList.find(c => c.data.name === interaction.commandName);
             if (!command) return;
 
-            // Fetch language quickly — short timeout to preserve the 3s deferReply window
+            // Defer IMMEDIATELY — before any DB/network calls — to guarantee the 3s acknowledgement window
+            try {
+                await interaction.deferReply(command.ephemeral ? { flags: MessageFlags.Ephemeral } : {});
+            } catch {
+                return; // Interaction already expired, nothing to do
+            }
+
+            // Now we have 15 minutes for editReply — fetch language safely
             let userLang = 'en';
             try {
                 userLang = await Promise.race([
                     this.userManager.getLanguage(interaction.user.id),
-                    new Promise<string>((resolve) => setTimeout(() => resolve('en'), 300))
+                    new Promise<string>((resolve) => setTimeout(() => resolve('en'), 2000))
                 ]);
             } catch {
                 userLang = 'en';
@@ -156,12 +163,7 @@ export class DiscordManager {
             } catch (error) {
                 console.error('[Discord] Command error:', error);
                 try {
-                    const errMsg = 'Une erreur est survenue lors de l\'exécution de cette commande.';
-                    if (interaction.replied || interaction.deferred) {
-                        await interaction.followUp({ content: errMsg, flags: 64 });
-                    } else {
-                        await interaction.reply({ content: errMsg, flags: 64 });
-                    }
+                    await interaction.editReply('Une erreur est survenue lors de l\'exécution de cette commande.');
                 } catch {
                     // Interaction expired, nothing we can do
                 }

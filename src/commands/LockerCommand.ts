@@ -6,8 +6,9 @@ export const LockerCommand: Command = {
         .setName('locker')
         .setDescription('Affiche un résumé de votre casier Fortnite'),
 
+    ephemeral: true,
+
     async execute(interaction: ChatInputCommandInteraction, context: CommandContext, userLang: string) {
-        await interaction.deferReply({ ephemeral: true });
         const locker = await context.userManager.getLocker(interaction.user.id);
 
         if (!locker) {

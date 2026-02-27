@@ -7,8 +7,6 @@ export const InfoCommand: Command = {
         .setDescription('Afficher les statistiques des bots'),
 
     async execute(interaction: ChatInputCommandInteraction, context: CommandContext, userLang: string) {
-        await interaction.deferReply();
-
         const bots = context.botManager.getActiveBots();
         const totalBots = bots.length;
         const onlineBots = bots.filter(b => b.isConnected).length;

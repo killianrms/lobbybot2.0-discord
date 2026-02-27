@@ -13,9 +13,16 @@ const EG_DEVICE_AUTH_URL = 'https://account-public-service-prod.ol.epicgames.com
 // Launcher User-Agent for Epic Games API requests
 const EG_USER_AGENT = 'EpicGamesLauncher/15.17.1-27211996+++Portal+Release-Live Windows/10.0.19041.2.256.64bit';
 
-// Clients to try (in order) for deviceAuthorization endpoint
+// Public client IDs known to support device_code without a secret
+const DEVICE_FLOW_PUBLIC_CLIENTS = [
+    '98f7e42c2e3a4f86a74eb43fbb41ed39', // kairosPCGameClient
+    '34a02cf8f4414e29b15921876da36f9a', // launcherAppClient2
+    'ec684b8c687f479fadea3cb2ad83f5c6', // fortnitePCGameClient
+];
+
+// Clients to try with full Basic auth (client_id:client_secret)
 const DEVICE_FLOW_CLIENTS = [
-    ['98f7e42c2e3a4f86a74eb43fbb41ed39', '0a2449a2-001a-451e-afec-3e812901c4d7'], // kairosPCGameClient (preferred)
+    ['98f7e42c2e3a4f86a74eb43fbb41ed39', '0a2449a2-001a-451e-afec-3e812901c4d7'], // kairosPCGameClient
     ['34a02cf8f4414e29b15921876da36f9a', 'daafbccc737745039dffe53d94fc76cf'],       // launcherAppClient2
     ['ec684b8c687f479fadea3cb2ad83f5c6', 'e1f31c211f28413186262d37a13fc84d'],       // fortnitePCGameClient
     ['3446cd72694c4a4485d81b77adbb2141', '9209d4a5e25a457fb9b07489d313b41a'],       // fortniteIOSGameClient
@@ -34,20 +41,24 @@ export class UserManager {
 
     /** Returns device flow data, or throws Error('DEVICE_FLOW_UNAVAILABLE') if no client works */
     public async initiateDeviceFlow(discordId: string): Promise<{ userCode: string; activateUrl: string; interval: number }> {
-        for (const [id, secret] of DEVICE_FLOW_CLIENTS) {
-            const authHeader = `Basic ${Buffer.from(`${id}:${secret}`).toString('base64')}`;
-            const headers = {
-                'Authorization': authHeader,
-                'Content-Type': 'application/x-www-form-urlencoded',
-                'User-Agent': EG_USER_AGENT,
-            };
-            for (const body of ['prompt=login', 'scope=basic_profile', '']) {
+        const baseHeaders = {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            'User-Agent': EG_USER_AGENT,
+        };
+
+        // Strategy 1: Public client — send client_id in body, no Authorization header
+        // (some Epic clients like kairosPCGameClient are public and don't need a secret)
+        for (const id of DEVICE_FLOW_PUBLIC_CLIENTS) {
+            for (const extraParams of ['', '&scope=basic_profile']) {
                 try {
-                    const response = await axios.post(EG_DEVICE_AUTH_URL, body, { headers, timeout: 8000 });
+                    const body = `client_id=${id}${extraParams}`;
+                    const response = await axios.post(EG_DEVICE_AUTH_URL, body, { headers: baseHeaders, timeout: 8000 });
                     const { device_code, user_code, interval, expires_in } = response.data;
                     if (!device_code || !user_code) continue;
+                    // For polling we still need to identify the client — use empty-secret Basic auth
+                    const authHeader = `Basic ${Buffer.from(`${id}:`).toString('base64')}`;
                     this.deviceFlowSessions.set(discordId, { deviceCode: device_code, authHeader });
-                    console.log(`[DeviceFlow] ✅ Success with client ${id}, body="${body}", interval=${interval}s, expires_in=${expires_in}s`);
+                    console.log(`[DeviceFlow] ✅ Public client ${id}, params="${extraParams}", interval=${interval}s, expires_in=${expires_in}s`);
                     return {
                         userCode: user_code as string,
                         activateUrl: `https://www.epicgames.com/id/activate?user_code=${user_code}&client_id=${id}`,
@@ -57,10 +68,36 @@ export class UserManager {
                     const status = e.response?.status;
                     const code = e.response?.data?.errorCode || e.response?.data?.error || '';
                     const msg = e.response?.data?.errorMessage || e.response?.data?.error_description || e.message;
-                    console.warn(`[DeviceFlow] ❌ client=${id} body="${body}" → HTTP ${status} | ${code} | ${msg}`);
+                    console.warn(`[DeviceFlow] ❌ public client=${id} params="${extraParams}" → HTTP ${status} | ${code} | ${msg}`);
                 }
             }
         }
+
+        // Strategy 2: Basic auth with known client_id:secret pairs
+        for (const [id, secret] of DEVICE_FLOW_CLIENTS) {
+            const authHeader = `Basic ${Buffer.from(`${id}:${secret}`).toString('base64')}`;
+            const headers = { ...baseHeaders, 'Authorization': authHeader };
+            for (const body of ['', 'scope=basic_profile']) {
+                try {
+                    const response = await axios.post(EG_DEVICE_AUTH_URL, body, { headers, timeout: 8000 });
+                    const { device_code, user_code, interval, expires_in } = response.data;
+                    if (!device_code || !user_code) continue;
+                    this.deviceFlowSessions.set(discordId, { deviceCode: device_code, authHeader });
+                    console.log(`[DeviceFlow] ✅ Basic auth client ${id}, body="${body}", interval=${interval}s, expires_in=${expires_in}s`);
+                    return {
+                        userCode: user_code as string,
+                        activateUrl: `https://www.epicgames.com/id/activate?user_code=${user_code}&client_id=${id}`,
+                        interval: (interval as number) || 5,
+                    };
+                } catch (e: any) {
+                    const status = e.response?.status;
+                    const code = e.response?.data?.errorCode || e.response?.data?.error || '';
+                    const msg = e.response?.data?.errorMessage || e.response?.data?.error_description || e.message;
+                    console.warn(`[DeviceFlow] ❌ Basic auth client=${id} body="${body}" → HTTP ${status} | ${code} | ${msg}`);
+                }
+            }
+        }
+
         throw new Error('DEVICE_FLOW_UNAVAILABLE');
     }
 

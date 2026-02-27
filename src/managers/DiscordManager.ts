@@ -87,7 +87,11 @@ export class DiscordManager {
 
             // --- BUTTON: login_enter_code → open modal (fallback flow) ---
             if (interaction.isButton() && interaction.customId === 'login_enter_code') {
-                const lang = await this.userManager.getLanguage(interaction.user.id).catch(() => 'en');
+                // showModal must be called immediately — use Discord locale, no DB query
+                const lang = interaction.locale?.startsWith('fr') ? 'fr'
+                    : interaction.locale?.startsWith('es') ? 'es'
+                    : interaction.locale?.startsWith('de') ? 'de'
+                    : 'en';
                 const t = (key: string) => getTranslation(lang, key);
 
                 const modal = new ModalBuilder()

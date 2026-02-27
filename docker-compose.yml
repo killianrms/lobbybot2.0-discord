@@ -51,6 +51,7 @@ services:
       - DB_USER=${DB_USER}
       - DB_PASS=${DB_PASS}
       - DB_NAME=${DB_NAME}
+      - EPIC_MASTER_KEY=${EPIC_MASTER_KEY}
     volumes:
       - ./accounts.csv:/app/accounts.csv
     depends_on:

@@ -10,11 +10,16 @@ const EG_ANDROID_AUTH = `Basic ${Buffer.from(`${EG_ANDROID_ID}:${EG_ANDROID_SECR
 const EG_TOKEN_URL = 'https://account-public-service-prod.ol.epicgames.com/account/api/oauth/token';
 const EG_DEVICE_AUTH_URL = 'https://account-public-service-prod.ol.epicgames.com/account/api/oauth/deviceAuthorization';
 
+// Launcher User-Agent for Epic Games API requests
+const EG_USER_AGENT = 'EpicGamesLauncher/15.17.1-27211996+++Portal+Release-Live Windows/10.0.19041.2.256.64bit';
+
 // Clients to try (in order) for deviceAuthorization endpoint
 const DEVICE_FLOW_CLIENTS = [
     ['34a02cf8f4414e29b15921876da36f9a', 'daafbccc737745039dffe53d94fc76cf'], // launcherAppClient2
-    ['38dbfc3196024d5980386a37b7c792bb', 'a6280b87-e45e-409b-9681-8f15eb7dbcf5'], // androidPortal
-    ['8f50327ba00d4ebeb81991ee04a42fc1', '0b0d21c7-c195-4c75-abb0-00ebc36b60f5'], // EOS SDK Auth Tool
+    ['ec684b8c687f479fadea3cb2ad83f5c6', 'e1f31c211f28413186262d37a13fc84d'], // fortnitePCGameClient
+    ['3446cd72694c4a4485d81b77adbb2141', '9209d4a5e25a457fb9b07489d313b41a'], // fortniteIOSGameClient
+    ['3f69e56c7649492c8cc29f1af08a8a12', 'b51ee9cb12234f50a69efa67ef53812e'], // fortniteAndroidGameClient
+    ['875a3b57d3a640a6b7f9b4e883463ab4', ''],                                   // epicgamesComClient (public)
 ] as const;
 
 interface DeviceSession { deviceCode: string; authHeader: string; }
@@ -32,17 +37,24 @@ export class UserManager {
         for (const [id, secret] of DEVICE_FLOW_CLIENTS) {
             try {
                 const authHeader = `Basic ${Buffer.from(`${id}:${secret}`).toString('base64')}`;
-                const response = await axios.post(
-                    EG_DEVICE_AUTH_URL,
-                    'scope=basic_profile',
-                    { headers: { 'Authorization': authHeader, 'Content-Type': 'application/x-www-form-urlencoded' }, timeout: 6000 }
-                );
-                const { device_code, user_code, verification_uri_complete } = response.data;
-                this.deviceFlowSessions.set(discordId, { deviceCode: device_code, authHeader });
-                return {
-                    userCode: user_code as string,
-                    activateUrl: (verification_uri_complete as string) || `https://www.epicgames.com/id/activate?userCode=${user_code}`
+                const headers = {
+                    'Authorization': authHeader,
+                    'Content-Type': 'application/x-www-form-urlencoded',
+                    'User-Agent': EG_USER_AGENT,
                 };
+                // Try without scope first (required for some public clients), then with scope
+                for (const body of ['', 'scope=basic_profile']) {
+                    try {
+                        const response = await axios.post(EG_DEVICE_AUTH_URL, body, { headers, timeout: 6000 });
+                        const { device_code, user_code, verification_uri_complete } = response.data;
+                        this.deviceFlowSessions.set(discordId, { deviceCode: device_code, authHeader });
+                        console.log(`[DeviceFlow] Success with client ${id}`);
+                        return {
+                            userCode: user_code as string,
+                            activateUrl: (verification_uri_complete as string) || `https://www.epicgames.com/id/activate?userCode=${user_code}`
+                        };
+                    } catch { /* try next body */ }
+                }
             } catch { /* try next client */ }
         }
         throw new Error('DEVICE_FLOW_UNAVAILABLE');

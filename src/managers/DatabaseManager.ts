@@ -2,6 +2,7 @@ import { Pool } from 'pg';
 import { BotAccount } from '../types';
 import fs from 'fs';
 import path from 'path';
+import crypto from 'crypto';
 import { CSVManager } from './CSVManager';
 
 export class DatabaseManager {
@@ -64,7 +65,7 @@ export class DatabaseManager {
                     if (legacyExists.rows[0]?.tbl) {
                         const epCount = await client.query('SELECT count(*) AS c FROM epic_accounts');
                         if (parseInt(epCount.rows[0].c) === 0) {
-                            await client.query(`INSERT INTO epic_accounts SELECT * FROM epic_accounts ON CONFLICT DO NOTHING`);
+                            await client.query(`INSERT INTO epic_accounts SELECT * FROM bots ON CONFLICT DO NOTHING`);
                             console.log('[Database] Migrated bots → epic_accounts');
                         }
                     }
@@ -93,6 +94,30 @@ export class DatabaseManager {
                 }
             }
         }
+    }
+
+    private decryptSecret(encrypted: string | null): string | null {
+        if (!encrypted) return null;
+        const masterKey = process.env.EPIC_MASTER_KEY;
+        if (!masterKey) {
+            console.warn('[Database] EPIC_MASTER_KEY not set, cannot decrypt secret');
+            return null;
+        }
+        try {
+            // Format: iv_hex:ciphertext_hex (AES-256-CBC, key = SHA-256(EPIC_MASTER_KEY))
+            const parts = encrypted.split(':');
+            if (parts.length === 2) {
+                const iv = Buffer.from(parts[0], 'hex');
+                const key = crypto.createHash('sha256').update(masterKey).digest();
+                const decipher = crypto.createDecipheriv('aes-256-cbc', key, iv);
+                let decrypted = decipher.update(parts[1], 'hex', 'utf8');
+                decrypted += decipher.final('utf8');
+                return decrypted;
+            }
+        } catch (e: any) {
+            console.error('[Database] Decryption failed:', e.message);
+        }
+        return null;
     }
 
     private async checkMigration() {
@@ -141,12 +166,7 @@ export class DatabaseManager {
     }
 
     public async getAllBots(): Promise<BotAccount[]> {
-        const res = await this.pool.query('SELECT * FROM epic_accounts');
-        if (res.rows.length > 0) {
-            console.log('[Database] epic_accounts columns:', Object.keys(res.rows[0]));
-            const r = res.rows[0];
-            console.log('[Database] First row sample — device_id:', r.device_id, '| account_id:', r.account_id, '| secret:', r.secret ? r.secret.substring(0, 6) + '...' : 'NULL');
-        }
+        const res = await this.pool.query('SELECT * FROM epic_accounts WHERE is_active IS DISTINCT FROM false');
         return res.rows.map(row => ({
             email: row.email,
             pseudo: row.pseudo,
@@ -154,7 +174,9 @@ export class DatabaseManager {
             deviceAuth: {
                 deviceId: row.device_id,
                 accountId: row.account_id,
-                secret: row.secret
+                secret: row.secret_enc
+                    ? this.decryptSecret(row.secret_enc)
+                    : (row.secret ?? null)
             }
         }));
     }

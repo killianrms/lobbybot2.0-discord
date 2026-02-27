@@ -35,28 +35,31 @@ export class UserManager {
     /** Returns device flow data, or throws Error('DEVICE_FLOW_UNAVAILABLE') if no client works */
     public async initiateDeviceFlow(discordId: string): Promise<{ userCode: string; activateUrl: string; interval: number }> {
         for (const [id, secret] of DEVICE_FLOW_CLIENTS) {
-            try {
-                const authHeader = `Basic ${Buffer.from(`${id}:${secret}`).toString('base64')}`;
-                const headers = {
-                    'Authorization': authHeader,
-                    'Content-Type': 'application/x-www-form-urlencoded',
-                    'User-Agent': EG_USER_AGENT,
-                };
-                // Try without scope first (required for some public clients), then with scope
-                for (const body of ['', 'scope=basic_profile']) {
-                    try {
-                        const response = await axios.post(EG_DEVICE_AUTH_URL, body, { headers, timeout: 6000 });
-                        const { device_code, user_code, interval, expires_in } = response.data;
-                        this.deviceFlowSessions.set(discordId, { deviceCode: device_code, authHeader });
-                        console.log(`[DeviceFlow] Success with client ${id}, interval=${interval}s, expires_in=${expires_in}s`);
-                        return {
-                            userCode: user_code as string,
-                            activateUrl: `https://www.epicgames.com/id/activate?user_code=${user_code}&client_id=${id}`,
-                            interval: (interval as number) || 5,
-                        };
-                    } catch { /* try next body */ }
+            const authHeader = `Basic ${Buffer.from(`${id}:${secret}`).toString('base64')}`;
+            const headers = {
+                'Authorization': authHeader,
+                'Content-Type': 'application/x-www-form-urlencoded',
+                'User-Agent': EG_USER_AGENT,
+            };
+            for (const body of ['prompt=login', 'scope=basic_profile', '']) {
+                try {
+                    const response = await axios.post(EG_DEVICE_AUTH_URL, body, { headers, timeout: 8000 });
+                    const { device_code, user_code, interval, expires_in } = response.data;
+                    if (!device_code || !user_code) continue;
+                    this.deviceFlowSessions.set(discordId, { deviceCode: device_code, authHeader });
+                    console.log(`[DeviceFlow] ✅ Success with client ${id}, body="${body}", interval=${interval}s, expires_in=${expires_in}s`);
+                    return {
+                        userCode: user_code as string,
+                        activateUrl: `https://www.epicgames.com/id/activate?user_code=${user_code}&client_id=${id}`,
+                        interval: (interval as number) || 5,
+                    };
+                } catch (e: any) {
+                    const status = e.response?.status;
+                    const code = e.response?.data?.errorCode || e.response?.data?.error || '';
+                    const msg = e.response?.data?.errorMessage || e.response?.data?.error_description || e.message;
+                    console.warn(`[DeviceFlow] ❌ client=${id} body="${body}" → HTTP ${status} | ${code} | ${msg}`);
                 }
-            } catch { /* try next client */ }
+            }
         }
         throw new Error('DEVICE_FLOW_UNAVAILABLE');
     }

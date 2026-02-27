@@ -33,7 +33,7 @@ export class UserManager {
     }
 
     /** Returns device flow data, or throws Error('DEVICE_FLOW_UNAVAILABLE') if no client works */
-    public async initiateDeviceFlow(discordId: string): Promise<{ userCode: string; activateUrl: string }> {
+    public async initiateDeviceFlow(discordId: string): Promise<{ userCode: string; activateUrl: string; interval: number }> {
         for (const [id, secret] of DEVICE_FLOW_CLIENTS) {
             try {
                 const authHeader = `Basic ${Buffer.from(`${id}:${secret}`).toString('base64')}`;
@@ -46,12 +46,13 @@ export class UserManager {
                 for (const body of ['', 'scope=basic_profile']) {
                     try {
                         const response = await axios.post(EG_DEVICE_AUTH_URL, body, { headers, timeout: 6000 });
-                        const { device_code, user_code } = response.data;
+                        const { device_code, user_code, interval, expires_in } = response.data;
                         this.deviceFlowSessions.set(discordId, { deviceCode: device_code, authHeader });
-                        console.log(`[DeviceFlow] Success with client ${id}`);
+                        console.log(`[DeviceFlow] Success with client ${id}, interval=${interval}s, expires_in=${expires_in}s`);
                         return {
                             userCode: user_code as string,
-                            activateUrl: `https://www.epicgames.com/id/activate?user_code=${user_code}&client_id=${id}`
+                            activateUrl: `https://www.epicgames.com/id/activate?user_code=${user_code}&client_id=${id}`,
+                            interval: (interval as number) || 5,
                         };
                     } catch { /* try next body */ }
                 }

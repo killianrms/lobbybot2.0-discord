@@ -198,8 +198,8 @@ export class DatabaseManager {
             pseudo: row.pseudo,
             password: '',
             deviceAuth: {
-                deviceId:  decryptFernet(row.device_id),
-                accountId: decryptFernet(row.account_id),
+                deviceId:  row.device_id,
+                accountId: row.account_id,
                 secret:    decryptFernet(row.secret),
             }
         }));

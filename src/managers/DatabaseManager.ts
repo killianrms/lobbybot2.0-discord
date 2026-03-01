@@ -6,6 +6,7 @@ import crypto from 'crypto';
 import { CSVManager } from './CSVManager';
 
 // ── Déchiffrement Fernet (compatible avec crypto.py du website) ──────────────
+let _fernetLoggedOnce = false;
 
 function getFernetKeyBytes(): Buffer | null {
     const raw = (process.env.EPIC_MASTER_KEY || '').trim();
@@ -42,7 +43,12 @@ function decryptFernet(token: string): string {
         const ciphertext = tokenBytes.slice(25, tokenBytes.length - 32);
 
         const decipher = crypto.createDecipheriv('aes-128-cbc', encryptionKey, iv);
-        return Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf-8');
+        const result = Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf-8');
+        if (!_fernetLoggedOnce) {
+            console.log('[Database] Fernet decryption OK');
+            _fernetLoggedOnce = true;
+        }
+        return result;
     } catch (e: any) {
         console.error('[DB] Déchiffrement Fernet échoué:', e.message);
         return token; // retourne brut plutôt que planter

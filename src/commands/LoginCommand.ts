@@ -9,9 +9,9 @@ import {
 import { Command, CommandContext } from './Command';
 import { getTranslation } from '../utils/locales';
 
-// Passe par le login Epic d'abord → redirige vers la page du code auth
-const EPIC_AUTH_URL =
-    'https://www.epicgames.com/id/login?lang=en&noHostRedirect=true&redirectUrl=https%3A%2F%2Fwww.epicgames.com%2Fid%2Fapi%2Fredirect%3FclientId%3D3f69e56c7649492c8cc29f1af08a8a12%26responseType%3Dcode';
+// Page qui affiche directement le code d'autorisation (Epic redirige vers login si besoin)
+const EPIC_CODE_URL  = 'https://www.epicgames.com/id/api/redirect?clientId=3f69e56c7649492c8cc29f1af08a8a12&responseType=code';
+const EPIC_LOGIN_URL = 'https://www.epicgames.com/id/login';
 
 export const LoginCommand: Command = {
     data: new SlashCommandBuilder()
@@ -98,9 +98,13 @@ export const LoginCommand: Command = {
 
             const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
                 new ButtonBuilder()
+                    .setLabel(t('LOGIN_EPIC_LOGIN_BTN'))
+                    .setStyle(ButtonStyle.Link)
+                    .setURL(EPIC_LOGIN_URL),
+                new ButtonBuilder()
                     .setLabel(t('LOGIN_GET_CODE_BTN'))
                     .setStyle(ButtonStyle.Link)
-                    .setURL(EPIC_AUTH_URL),
+                    .setURL(EPIC_CODE_URL),
                 new ButtonBuilder()
                     .setCustomId('login_enter_code')
                     .setLabel(t('LOGIN_ENTER_CODE_BTN'))

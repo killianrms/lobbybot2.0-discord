@@ -33,6 +33,14 @@ async function main() {
 
     // 2. Start Services
     await botManager.launchAllBots();
+
+    // Sync dashboard after all bots are up, then every 30s
+    socketManager.sendLogin();
+    socketManager.startPeriodicUpdates();
+
+    // Check DB every 5min for new bots added externally
+    botManager.startDBSync();
+
     await discordManager.start(process.env.DISCORD_TOKEN || '');
 }
 

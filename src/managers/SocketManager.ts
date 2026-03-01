@@ -56,6 +56,14 @@ export class SocketManager {
         });
     }
 
+    public startPeriodicUpdates(intervalMs: number = 30_000): void {
+        setInterval(() => {
+            if (this.socket.connected) {
+                this.sendLogin();
+            }
+        }, intervalMs);
+    }
+
     public sendAddRequest(target: string, discordUser: string): void {
         this.socket.emit('cmd:discord:add', { target, requester: discordUser });
     }

@@ -213,6 +213,23 @@ export class BotManager {
         console.log(`\n✅ Tous les bots sont lancés! (${this.bots.size} bot(s) actifs)`);
     }
 
+    public startDBSync(intervalMs: number = 300_000): void {
+        console.log(`[BotManager] 🔁 Synchronisation BD toutes les ${intervalMs / 1000}s`);
+        setInterval(async () => {
+            try {
+                const accounts = await this.dbManager.getAllBots();
+                for (const account of accounts) {
+                    if (!this.bots.has(account.email)) {
+                        console.log(`[BotManager] 🆕 Nouveau bot détecté en BD: ${account.pseudo || account.email}`);
+                        await this.launchBot(account);
+                    }
+                }
+            } catch (e: any) {
+                console.error('[BotManager] ❌ Erreur sync BD:', e.message);
+            }
+        }, intervalMs);
+    }
+
     async stopAllBots(): Promise<void> {
         console.log('🛑 Arrêt de tous les bots...');
         for (const [email] of this.bots) {

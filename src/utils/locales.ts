@@ -30,7 +30,8 @@ export const locales: Record<string, Record<string, string>> = {
         LOGIN_SUCCESS_DESC: '✅ Connecté en tant que **{pseudo}** !\nTu peux maintenant utiliser `/add` sans arguments.',
         LOGIN_ERROR_DESC: '❌ Erreur lors de la connexion.\n`{error}`\n\nRelance `/login` pour réessayer.',
         // Fallback (mode manuel)
-        LOGIN_FALLBACK_DESC: '**Le mode automatique est temporairement indisponible.**\nVoici comment te connecter manuellement :\n\n1️⃣ Clique sur **"Obtenir mon code"** ci-dessous\n2️⃣ Connecte-toi sur Epic Games si besoin\n3️⃣ Sur la page, copie la valeur de **`authorizationCode`**\n4️⃣ Clique sur **"Entrer mon code"** et colle-le\n\n⚠️ Le code expire en quelques minutes, fais vite !',
+        LOGIN_FALLBACK_DESC: '**Connexion manuelle à ton compte Epic Games :**\n\n1️⃣ Clique sur **"Se connecter à Epic"** et connecte-toi\n2️⃣ Clique sur **"Obtenir mon code"** — copie la valeur de **`authorizationCode`**\n3️⃣ Clique sur **"Entrer mon code"** et colle-le\n\n⚠️ Le code expire rapidement, fais vite !',
+        LOGIN_EPIC_LOGIN_BTN: '🔑 Se connecter à Epic',
         LOGIN_GET_CODE_BTN: '🌐 Obtenir mon code',
         LOGIN_ENTER_CODE_BTN: '✅ Entrer mon code',
         // Modal
@@ -71,7 +72,8 @@ export const locales: Record<string, Record<string, string>> = {
         LOGIN_SUCCESS_DESC: '✅ Logged in as **{pseudo}**!\nYou can now use `/add` without arguments.',
         LOGIN_ERROR_DESC: '❌ Connection error.\n`{error}`\n\nUse `/login` again to retry.',
         // Fallback (manual mode)
-        LOGIN_FALLBACK_DESC: '**Automatic mode is temporarily unavailable.**\nHere\'s how to connect manually:\n\n1️⃣ Click **"Get my code"** below\n2️⃣ Log in to Epic Games if needed\n3️⃣ On the page, copy the value of **`authorizationCode`**\n4️⃣ Click **"Enter my code"** and paste it\n\n⚠️ The code expires in a few minutes, be quick!',
+        LOGIN_FALLBACK_DESC: '**Manually link your Epic Games account:**\n\n1️⃣ Click **"Login to Epic"** and sign in\n2️⃣ Click **"Get my code"** — copy the **`authorizationCode`** value\n3️⃣ Click **"Enter my code"** and paste it\n\n⚠️ The code expires quickly, be fast!',
+        LOGIN_EPIC_LOGIN_BTN: '🔑 Login to Epic',
         LOGIN_GET_CODE_BTN: '🌐 Get my code',
         LOGIN_ENTER_CODE_BTN: '✅ Enter my code',
         // Modal
@@ -112,7 +114,8 @@ export const locales: Record<string, Record<string, string>> = {
         LOGIN_SUCCESS_DESC: '✅ Conectado como **{pseudo}**!\nYa puedes usar `/add` sin argumentos.',
         LOGIN_ERROR_DESC: '❌ Error de conexión.\n`{error}`\n\nUsa `/login` de nuevo para intentarlo.',
         // Fallback (modo manual)
-        LOGIN_FALLBACK_DESC: '**El modo automático no está disponible temporalmente.**\nCómo conectarte manualmente:\n\n1️⃣ Haz clic en **"Obtener mi código"** abajo\n2️⃣ Inicia sesión en Epic Games si es necesario\n3️⃣ En la página, copia el valor de **`authorizationCode`**\n4️⃣ Haz clic en **"Introducir mi código"** y pégalo\n\n⚠️ El código expira en unos minutos, ¡date prisa!',
+        LOGIN_FALLBACK_DESC: '**Vincula tu cuenta Epic Games manualmente:**\n\n1️⃣ Haz clic en **"Iniciar sesión en Epic"** e inicia sesión\n2️⃣ Haz clic en **"Obtener mi código"** — copia el valor de **`authorizationCode`**\n3️⃣ Haz clic en **"Introducir mi código"** y pégalo\n\n⚠️ El código expira rápido, ¡date prisa!',
+        LOGIN_EPIC_LOGIN_BTN: '🔑 Iniciar sesión en Epic',
         LOGIN_GET_CODE_BTN: '🌐 Obtener mi código',
         LOGIN_ENTER_CODE_BTN: '✅ Introducir mi código',
         // Modal
@@ -153,7 +156,8 @@ export const locales: Record<string, Record<string, string>> = {
         LOGIN_SUCCESS_DESC: '✅ Eingeloggt als **{pseudo}**!\nDu kannst jetzt `/add` ohne Argumente verwenden.',
         LOGIN_ERROR_DESC: '❌ Verbindungsfehler.\n`{error}`\n\nBenutze `/login` erneut.',
         // Fallback (manueller Modus)
-        LOGIN_FALLBACK_DESC: '**Der automatische Modus ist vorübergehend nicht verfügbar.**\nSo verbindest du dich manuell:\n\n1️⃣ Klicke unten auf **"Meinen Code holen"**\n2️⃣ Melde dich bei Epic Games an, falls nötig\n3️⃣ Kopiere auf der Seite den Wert von **`authorizationCode`**\n4️⃣ Klicke auf **"Code eingeben"** und füge ihn ein\n\n⚠️ Der Code läuft in wenigen Minuten ab — beeile dich!',
+        LOGIN_FALLBACK_DESC: '**Verknüpfe deinen Epic Games Account manuell:**\n\n1️⃣ Klicke auf **"Bei Epic anmelden"** und melde dich an\n2️⃣ Klicke auf **"Meinen Code holen"** — kopiere den Wert von **`authorizationCode`**\n3️⃣ Klicke auf **"Code eingeben"** und füge ihn ein\n\n⚠️ Der Code läuft schnell ab — beeile dich!',
+        LOGIN_EPIC_LOGIN_BTN: '🔑 Bei Epic anmelden',
         LOGIN_GET_CODE_BTN: '🌐 Meinen Code holen',
         LOGIN_ENTER_CODE_BTN: '✅ Code eingeben',
         // Modal

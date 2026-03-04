@@ -13,8 +13,9 @@ function getFernetKeyBytes(): Buffer | null {
     if (!raw) return null;
 
     // Cas 1 : clé Fernet valide = base64url qui décode en exactement 32 bytes
+    // ⚠️ base64url utilise - et _ → il faut les remplacer avant de décoder
     try {
-        const decoded = Buffer.from(raw, 'base64');
+        const decoded = Buffer.from(raw.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
         if (decoded.length === 32) return decoded;
     } catch {}
 

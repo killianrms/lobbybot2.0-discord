@@ -90,12 +90,16 @@ export class DatabaseManager {
                 // Create tables
                 await client.query(`
                     CREATE TABLE IF NOT EXISTS epic_accounts (
+                        id SERIAL,
                         email TEXT PRIMARY KEY,
                         pseudo TEXT,
+                        password_enc TEXT,
+                        secret_enc TEXT,
                         device_id TEXT,
                         account_id TEXT,
-                        secret TEXT,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                        is_active BOOLEAN DEFAULT TRUE,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        last_used_at TIMESTAMP
                     );
 
                     CREATE TABLE IF NOT EXISTS users (
@@ -192,7 +196,7 @@ export class DatabaseManager {
     }
 
     public async getAllBots(): Promise<BotAccount[]> {
-        const res = await this.pool.query('SELECT * FROM epic_accounts');
+        const res = await this.pool.query('SELECT * FROM epic_accounts WHERE is_active IS DISTINCT FROM false');
         return res.rows.map(row => ({
             email: row.email,
             pseudo: row.pseudo,
@@ -200,20 +204,21 @@ export class DatabaseManager {
             deviceAuth: {
                 deviceId:  row.device_id,
                 accountId: row.account_id,
-                secret:    decryptFernet(row.secret),
+                secret:    decryptFernet(row.secret_enc),
             }
         }));
     }
 
     public async addBot(account: BotAccount): Promise<void> {
         await this.pool.query(`
-            INSERT INTO epic_accounts (email, pseudo, device_id, account_id, secret)
-            VALUES ($1, $2, $3, $4, $5)
+            INSERT INTO epic_accounts (email, pseudo, device_id, account_id, secret_enc, is_active)
+            VALUES ($1, $2, $3, $4, $5, TRUE)
             ON CONFLICT (email) DO UPDATE SET
                 pseudo = EXCLUDED.pseudo,
                 device_id = EXCLUDED.device_id,
                 account_id = EXCLUDED.account_id,
-                secret = EXCLUDED.secret
+                secret_enc = EXCLUDED.secret_enc,
+                is_active = TRUE
         `, [
             account.email,
             account.pseudo,

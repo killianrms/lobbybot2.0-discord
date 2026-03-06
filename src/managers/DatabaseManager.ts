@@ -1,54 +1,6 @@
 import { Pool } from 'pg';
 import { BotAccount } from '../types';
-import fs from 'fs';
-import path from 'path';
-import crypto from 'crypto';
 import { CSVManager } from './CSVManager';
-
-// ── Déchiffrement Fernet (compatible avec crypto.py du website) ──────────────
-let _fernetLoggedOnce = false;
-
-function getFernetKeyBytes(): Buffer | null {
-    const raw = (process.env.EPIC_MASTER_KEY || '').trim();
-    if (!raw) return null;
-
-    // Cas 1 : clé Fernet valide = base64url qui décode en exactement 32 bytes
-    // ⚠️ base64url utilise - et _ → il faut les remplacer avant de décoder
-    try {
-        const decoded = Buffer.from(raw.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
-        if (decoded.length === 32) return decoded;
-    } catch {}
-
-    // Cas 2 : passphrase arbitraire → SHA-256 (identique au Python)
-    return crypto.createHash('sha256').update(raw, 'utf-8').digest();
-}
-
-// Retourne null si le token est Fernet mais ne peut pas être déchiffré (mauvaise clé)
-function decryptFernet(token: string): string | null {
-    if (!token || !token.startsWith('gAAAAA')) return token; // pas Fernet → plaintext, OK
-
-    const keyBytes = getFernetKeyBytes();
-    if (!keyBytes) {
-        console.warn('[DB] EPIC_MASTER_KEY manquante, bot ignoré');
-        return null;
-    }
-
-    try {
-        const encryptionKey = keyBytes.slice(16, 32);
-        const tokenBytes = Buffer.from(token.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
-        const iv         = tokenBytes.slice(9, 25);
-        const ciphertext = tokenBytes.slice(25, tokenBytes.length - 32);
-        const decipher = crypto.createDecipheriv('aes-128-cbc', encryptionKey, iv);
-        const result = Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf-8');
-        if (!_fernetLoggedOnce) {
-            console.log('[Database] Fernet decryption OK');
-            _fernetLoggedOnce = true;
-        }
-        return result;
-    } catch {
-        return null; // mauvaise clé → ce bot n'est pas le nôtre, on l'ignore
-    }
-}
 
 export class DatabaseManager {
     private pool: Pool;
@@ -192,18 +144,12 @@ export class DatabaseManager {
 
     public async getAllBots(): Promise<BotAccount[]> {
         const res = await this.pool.query('SELECT * FROM epic_accounts WHERE is_active IS DISTINCT FROM false');
-        const bots: BotAccount[] = [];
-        for (const row of res.rows) {
-            const secret = decryptFernet(row.secret_enc);
-            if (secret === null) continue; // clé différente → pas notre bot
-            bots.push({
-                email: row.email,
-                pseudo: row.pseudo,
-                password: '',
-                deviceAuth: { deviceId: row.device_id, accountId: row.account_id, secret }
-            });
-        }
-        return bots;
+        return res.rows.map(row => ({
+            email: row.email,
+            pseudo: row.pseudo,
+            password: '',
+            deviceAuth: { deviceId: row.device_id, accountId: row.account_id, secret: row.secret_enc }
+        }));
     }
 
     public async addBot(account: BotAccount): Promise<void> {

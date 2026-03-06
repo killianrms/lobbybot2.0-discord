@@ -9,6 +9,7 @@ import { SocialActions } from '../actions/SocialActions';
 
 export class BotManager {
     private bots: Map<string, any> = new Map();
+    private failedBots: Set<string> = new Set(); // bots avec credentials invalides, pas de retry
     private dbManager: DatabaseManager;
     private cosmeticManagers: Map<string, CosmeticManager> = new Map();
     private sentMessageIds: Map<string, Set<string>> = new Map();
@@ -75,6 +76,7 @@ export class BotManager {
         } catch (error: any) {
             console.error(`[${identifier}] ❌ Erreur: ${error.message}`);
             this.bots.delete(account.email);
+            this.failedBots.add(account.email); // ne pas retenter ce bot
         }
     }
 
@@ -219,7 +221,7 @@ export class BotManager {
             try {
                 const accounts = await this.dbManager.getAllBots();
                 for (const account of accounts) {
-                    if (!this.bots.has(account.email)) {
+                    if (!this.bots.has(account.email) && !this.failedBots.has(account.email)) {
                         console.log(`[BotManager] 🆕 Nouveau bot détecté en BD: ${account.pseudo || account.email}`);
                         await this.launchBot(account);
                     }

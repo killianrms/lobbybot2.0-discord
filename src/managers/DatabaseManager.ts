@@ -23,26 +23,21 @@ function getFernetKeyBytes(): Buffer | null {
     return crypto.createHash('sha256').update(raw, 'utf-8').digest();
 }
 
-function decryptFernet(token: string): string {
-    if (!token || !token.startsWith('gAAAAA')) return token; // pas un token Fernet
+// Retourne null si le token est Fernet mais ne peut pas être déchiffré (mauvaise clé)
+function decryptFernet(token: string): string | null {
+    if (!token || !token.startsWith('gAAAAA')) return token; // pas Fernet → plaintext, OK
 
     const keyBytes = getFernetKeyBytes();
     if (!keyBytes) {
-        console.warn('[DB] EPIC_MASTER_KEY manquante, secret non déchiffré');
-        return token;
+        console.warn('[DB] EPIC_MASTER_KEY manquante, bot ignoré');
+        return null;
     }
 
     try {
-        // Les 32 bytes : [0-15] = signing_key (HMAC), [16-31] = encryption_key (AES-128-CBC)
         const encryptionKey = keyBytes.slice(16, 32);
-
-        // Fernet est du base64url — Buffer.from gère base64 standard et urlsafe
         const tokenBytes = Buffer.from(token.replace(/-/g, '+').replace(/_/g, '/'), 'base64');
-
-        // Format : version(1) + timestamp(8) + iv(16) + ciphertext(?) + hmac(32)
         const iv         = tokenBytes.slice(9, 25);
         const ciphertext = tokenBytes.slice(25, tokenBytes.length - 32);
-
         const decipher = crypto.createDecipheriv('aes-128-cbc', encryptionKey, iv);
         const result = Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString('utf-8');
         if (!_fernetLoggedOnce) {
@@ -50,9 +45,8 @@ function decryptFernet(token: string): string {
             _fernetLoggedOnce = true;
         }
         return result;
-    } catch (e: any) {
-        console.error('[DB] Déchiffrement Fernet échoué:', e.message);
-        return token; // retourne brut plutôt que planter
+    } catch {
+        return null; // mauvaise clé → ce bot n'est pas le nôtre, on l'ignore
     }
 }
 
@@ -198,16 +192,18 @@ export class DatabaseManager {
 
     public async getAllBots(): Promise<BotAccount[]> {
         const res = await this.pool.query('SELECT * FROM epic_accounts WHERE is_active IS DISTINCT FROM false');
-        return res.rows.map(row => ({
-            email: row.email,
-            pseudo: row.pseudo,
-            password: '',
-            deviceAuth: {
-                deviceId:  row.device_id,
-                accountId: row.account_id,
-                secret:    decryptFernet(row.secret_enc),
-            }
-        }));
+        const bots: BotAccount[] = [];
+        for (const row of res.rows) {
+            const secret = decryptFernet(row.secret_enc);
+            if (secret === null) continue; // clé différente → pas notre bot
+            bots.push({
+                email: row.email,
+                pseudo: row.pseudo,
+                password: '',
+                deviceAuth: { deviceId: row.device_id, accountId: row.account_id, secret }
+            });
+        }
+        return bots;
     }
 
     public async addBot(account: BotAccount): Promise<void> {

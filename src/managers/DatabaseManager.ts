@@ -41,7 +41,7 @@ export class DatabaseManager {
                         email TEXT PRIMARY KEY,
                         pseudo TEXT,
                         password_enc TEXT,
-                        secret_enc TEXT,
+                        secret_id TEXT,
                         device_id TEXT,
                         account_id TEXT,
                         is_active BOOLEAN DEFAULT TRUE,
@@ -144,23 +144,25 @@ export class DatabaseManager {
 
     public async getAllBots(): Promise<BotAccount[]> {
         const res = await this.pool.query('SELECT * FROM epic_accounts WHERE is_active IS DISTINCT FROM false');
-        return res.rows.map(row => ({
-            email: row.email,
-            pseudo: row.pseudo,
-            password: '',
-            deviceAuth: { deviceId: row.device_id, accountId: row.account_id, secret: row.secret_enc }
-        }));
+        return res.rows
+            .filter(row => row.secret_id)
+            .map(row => ({
+                email: row.email,
+                pseudo: row.pseudo,
+                password: '',
+                deviceAuth: { deviceId: row.device_id, accountId: row.account_id, secret: row.secret_id }
+            }));
     }
 
     public async addBot(account: BotAccount): Promise<void> {
         await this.pool.query(`
-            INSERT INTO epic_accounts (email, pseudo, device_id, account_id, secret_enc, is_active)
+            INSERT INTO epic_accounts (email, pseudo, device_id, account_id, secret_id, is_active)
             VALUES ($1, $2, $3, $4, $5, TRUE)
             ON CONFLICT (email) DO UPDATE SET
                 pseudo = EXCLUDED.pseudo,
                 device_id = EXCLUDED.device_id,
                 account_id = EXCLUDED.account_id,
-                secret_enc = EXCLUDED.secret_enc,
+                secret_id = EXCLUDED.secret_id,
                 is_active = TRUE
         `, [
             account.email,

@@ -61,3 +61,5 @@ Cela lancera :
 ### 🛡️ Commandes Admin
 *   `/admin addbot ...` : Ajoute un nouveau bot à la base de données et le lance immédiatement (réservé admin).
 
+Fait par @Killianrms ! 
+

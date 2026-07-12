@@ -1,140 +1,95 @@
-import { Pool } from 'pg';
+import Database from 'better-sqlite3';
+import * as path from 'path';
+import * as fs from 'fs';
 import { BotAccount } from '../types';
 import { CSVManager } from './CSVManager';
 
+/**
+ * DatabaseManager — SQLite backend (shared with the web dashboard).
+ *
+ * The database file is shared with lobbybot2.0-website so the Discord manager
+ * and the dashboard read/write the exact same bots and users.
+ *
+ * Set DB_PATH in .env to the dashboard's data/lobbybot.db file, e.g.:
+ *   DB_PATH=C:\\Users\\Aeroz\\Desktop\\dev\\bot\\lobbybot2.0-website\\data\\lobbybot.db
+ *
+ * If DB_PATH is not set, it falls back to a local ./data/lobbybot.db file.
+ */
 export class DatabaseManager {
-    private pool: Pool;
+    private db: Database.Database;
     private csvManager: CSVManager;
 
     constructor(csvManager: CSVManager) {
         this.csvManager = csvManager;
 
-        const isExternal = process.env.DB_HOST && process.env.DB_HOST !== 'localhost' && process.env.DB_HOST !== '127.0.0.1';
+        const dbPath = process.env.DB_PATH || path.join(__dirname, '../../data/lobbybot.db');
+        fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 
-        this.pool = new Pool({
-            host: process.env.DB_HOST || 'localhost',
-            user: process.env.DB_USER || 'lobbybot',
-            password: process.env.DB_PASS || 'lobbybotpassword',
-            database: process.env.DB_NAME || 'lobbybot',
-            port: parseInt(process.env.DB_PORT || '5432', 10),
-            ssl: isExternal ? { rejectUnauthorized: false } : false,
-            connectionTimeoutMillis: 10000,
-            idleTimeoutMillis: 30000,
-        });
+        this.db = new Database(dbPath, { timeout: 30000 });
+        this.db.pragma('journal_mode = WAL');
+        this.db.pragma('synchronous = NORMAL');
+        this.db.pragma('foreign_keys = ON');
+        this.db.pragma('busy_timeout = 30000');
 
-        // Handle unexpected pool errors to prevent crashes
-        this.pool.on('error', (err) => {
-            console.error('[Database] Pool error (will reconnect on next query):', err.message);
-        });
+        console.log(`[Database] SQLite connected: ${dbPath}`);
     }
 
-    public async init(retries = 5, delay = 3000): Promise<void> {
-        for (let attempt = 1; attempt <= retries; attempt++) {
-            try {
-                const client = await this.pool.connect();
-                console.log('[Database] Connected to PostgreSQL');
+    public async init(): Promise<void> {
+        // Create tables (idempotent — matches the dashboard schema)
+        this.db.exec(`
+            CREATE TABLE IF NOT EXISTS epic_accounts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT UNIQUE NOT NULL,
+                pseudo TEXT,
+                password_enc TEXT,
+                secret_id TEXT,
+                device_id TEXT,
+                account_id TEXT,
+                is_active INTEGER DEFAULT 1,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                last_used_at DATETIME
+            );
+            CREATE TABLE IF NOT EXISTS users (
+                discord_id TEXT PRIMARY KEY,
+                epic_pseudo TEXT,
+                device_id TEXT,
+                account_id TEXT,
+                secret TEXT,
+                language TEXT DEFAULT 'en',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+        `);
+        console.log('[Database] Tables ready');
 
-                // Create tables
-                await client.query(`
-                    CREATE TABLE IF NOT EXISTS epic_accounts (
-                        id SERIAL,
-                        email TEXT PRIMARY KEY,
-                        pseudo TEXT,
-                        password_enc TEXT,
-                        secret_id TEXT,
-                        device_id TEXT,
-                        account_id TEXT,
-                        is_active BOOLEAN DEFAULT TRUE,
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        last_used_at TIMESTAMP
-                    );
-
-                    CREATE TABLE IF NOT EXISTS users (
-                        discord_id TEXT PRIMARY KEY,
-                        epic_pseudo TEXT,
-                        device_id TEXT,
-                        account_id TEXT,
-                        secret TEXT,
-                        language TEXT DEFAULT 'en',
-                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                    );
-                `);
-
-                // Migration: bots → epic_accounts si l'ancienne table existe et la nouvelle est vide
-                try {
-                    const legacy = await client.query(`SELECT to_regclass('public.bots') AS tbl`);
-                    if (legacy.rows[0]?.tbl) {
-                        const count = await client.query('SELECT count(*) AS c FROM epic_accounts');
-                        if (parseInt(count.rows[0].c) === 0) {
-                            await client.query(`INSERT INTO epic_accounts SELECT * FROM bots ON CONFLICT DO NOTHING`);
-                            console.log('[Database] Migrated bots → epic_accounts');
-                        }
-                    }
-                } catch { /* table bots inexistante, pas de migration nécessaire */ }
-
-                // Migration for existing users table if language column is missing
-                try {
-                    await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS language TEXT DEFAULT 'en';`);
-                    await client.query(`ALTER TABLE users ALTER COLUMN language SET DEFAULT 'en';`);
-                } catch (e) {
-                    // Column likely exists or other minor issue
-                }
-
-                client.release();
-                await this.checkMigration();
-                return; // Success — exit the retry loop
-
-            } catch (e: any) {
-                console.error(`[Database] Connection attempt ${attempt}/${retries} failed: ${e.message}`);
-                if (attempt < retries) {
-                    const waitTime = delay * attempt;
-                    console.log(`[Database] Retrying in ${waitTime / 1000}s...`);
-                    await new Promise(r => setTimeout(r, waitTime));
-                } else {
-                    console.error('[Database] All connection attempts failed. The bot will start but DB features will be unavailable.');
-                }
-            }
-        }
+        await this.checkMigration();
     }
 
-    private async checkMigration() {
+    private async checkMigration(): Promise<void> {
         try {
-            const res = await this.pool.query('SELECT count(*) as count FROM epic_accounts');
-            const rowCount = parseInt(res.rows[0].count);
-
-            if (rowCount === 0) {
+            const row = this.db.prepare('SELECT COUNT(*) AS count FROM epic_accounts').get() as { count: number };
+            if (row.count === 0) {
                 console.log('[Database] DB empty, checking for CSV migration...');
-
                 const accounts = await this.csvManager.readAccounts();
                 if (accounts.length > 0) {
                     console.log(`[Database] Found ${accounts.length} accounts in CSV. Migrating...`);
-
-                    const client = await this.pool.connect();
-                    try {
-                        await client.query('BEGIN');
-
-                        for (const bot of accounts) {
-                            await client.query(`
-                                INSERT INTO epic_accounts (email, pseudo, device_id, account_id, secret)
-                                VALUES ($1, $2, $3, $4, $5)
-                                ON CONFLICT (email) DO NOTHING
-                            `, [
+                    const insert = this.db.prepare(`
+                        INSERT INTO epic_accounts (email, pseudo, device_id, account_id, secret_id)
+                        VALUES (?, ?, ?, ?, ?)
+                        ON CONFLICT(email) DO NOTHING
+                    `);
+                    const migrate = this.db.transaction((rows: BotAccount[]) => {
+                        for (const bot of rows) {
+                            insert.run(
                                 bot.email,
                                 bot.pseudo,
                                 bot.deviceAuth?.deviceId,
                                 bot.deviceAuth?.accountId,
                                 bot.deviceAuth?.secret
-                            ]);
+                            );
                         }
-
-                        await client.query('COMMIT');
-                        console.log('[Database] Migration complete!');
-                    } catch (e) {
-                        await client.query('ROLLBACK');
-                        throw e;
-                    } finally {
-                        client.release();
-                    }
+                    });
+                    migrate(accounts);
+                    console.log('[Database] Migration complete!');
                 }
             }
         } catch (e: any) {
@@ -143,8 +98,8 @@ export class DatabaseManager {
     }
 
     public async getAllBots(): Promise<BotAccount[]> {
-        const res = await this.pool.query('SELECT * FROM epic_accounts WHERE is_active IS DISTINCT FROM false');
-        return res.rows
+        const rows = this.db.prepare('SELECT * FROM epic_accounts WHERE is_active IS NOT 0').all() as any[];
+        return rows
             .filter(row => row.secret_id)
             .map(row => ({
                 email: row.email,
@@ -155,54 +110,45 @@ export class DatabaseManager {
     }
 
     public async addBot(account: BotAccount): Promise<void> {
-        await this.pool.query(`
+        this.db.prepare(`
             INSERT INTO epic_accounts (email, pseudo, device_id, account_id, secret_id, is_active)
-            VALUES ($1, $2, $3, $4, $5, TRUE)
-            ON CONFLICT (email) DO UPDATE SET
-                pseudo = EXCLUDED.pseudo,
-                device_id = EXCLUDED.device_id,
-                account_id = EXCLUDED.account_id,
-                secret_id = EXCLUDED.secret_id,
-                is_active = TRUE
-        `, [
+            VALUES (?, ?, ?, ?, ?, 1)
+            ON CONFLICT(email) DO UPDATE SET
+                pseudo = excluded.pseudo,
+                device_id = excluded.device_id,
+                account_id = excluded.account_id,
+                secret_id = excluded.secret_id,
+                is_active = 1
+        `).run(
             account.email,
             account.pseudo,
             account.deviceAuth?.deviceId,
             account.deviceAuth?.accountId,
             account.deviceAuth?.secret
-        ]);
+        );
     }
 
     public async removeBot(email: string): Promise<void> {
-        await this.pool.query('DELETE FROM epic_accounts WHERE email = $1', [email]);
+        this.db.prepare('DELETE FROM epic_accounts WHERE email = ?').run(email);
     }
 
     // --- USER MANAGEMENT ---
 
     public async saveUser(discordId: string, pseudo: string, deviceAuth: any): Promise<void> {
-        await this.pool.query(`
+        this.db.prepare(`
             INSERT INTO users (discord_id, epic_pseudo, device_id, account_id, secret)
-            VALUES ($1, $2, $3, $4, $5)
-            ON CONFLICT (discord_id) DO UPDATE SET
-                epic_pseudo = EXCLUDED.epic_pseudo,
-                device_id = EXCLUDED.device_id,
-                account_id = EXCLUDED.account_id,
-                secret = EXCLUDED.secret
-        `, [
-            discordId,
-            pseudo,
-            deviceAuth.deviceId,
-            deviceAuth.accountId,
-            deviceAuth.secret
-        ]);
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(discord_id) DO UPDATE SET
+                epic_pseudo = excluded.epic_pseudo,
+                device_id = excluded.device_id,
+                account_id = excluded.account_id,
+                secret = excluded.secret
+        `).run(discordId, pseudo, deviceAuth.deviceId, deviceAuth.accountId, deviceAuth.secret);
     }
 
     public async getUser(discordId: string): Promise<any | null> {
-        const res = await this.pool.query('SELECT * FROM users WHERE discord_id = $1', [discordId]);
-
-        if (res.rows.length === 0) return null;
-
-        const row = res.rows[0];
+        const row = this.db.prepare('SELECT * FROM users WHERE discord_id = ?').get(discordId) as any;
+        if (!row) return null;
         return {
             discordId: row.discord_id,
             pseudo: row.epic_pseudo,
@@ -216,29 +162,19 @@ export class DatabaseManager {
     }
 
     public async deleteUser(discordId: string): Promise<void> {
-        await this.pool.query('DELETE FROM users WHERE discord_id = $1', [discordId]);
+        this.db.prepare('DELETE FROM users WHERE discord_id = ?').run(discordId);
     }
 
     public async setLanguage(discordId: string, lang: string): Promise<void> {
-        // Upsert logic: if user doesn't exist, we just create a row with the language? 
-        // Or we assume user exists? For robustnes, we should probably allows setting language even if not logged in fully?
-        // But for this bot, 'users' table is for logged in users with credentials.
-        // If we want to support language for non-logged in users we'd need a separate table or just row without credentials.
-        // For simplicity, let's assume we update if exists, or insert if not (but without auth).
-
-        await this.pool.query(`
+        this.db.prepare(`
             INSERT INTO users (discord_id, language)
-            VALUES ($1, $2)
-            ON CONFLICT (discord_id) DO UPDATE SET
-                language = EXCLUDED.language
-        `, [discordId, lang]);
+            VALUES (?, ?)
+            ON CONFLICT(discord_id) DO UPDATE SET language = excluded.language
+        `).run(discordId, lang);
     }
 
     public async getLanguage(discordId: string): Promise<string> {
-        const res = await this.pool.query('SELECT language FROM users WHERE discord_id = $1', [discordId]);
-        if (res.rows.length > 0) {
-            return res.rows[0].language || 'en';
-        }
-        return 'en';
+        const row = this.db.prepare('SELECT language FROM users WHERE discord_id = ?').get(discordId) as any;
+        return row?.language || 'en';
     }
 }

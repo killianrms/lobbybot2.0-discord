@@ -1,5 +1,6 @@
 import { Client } from 'fnbr';
 import { FortniteAPIService } from '../services/FortniteAPIService';
+import * as ModernParty from '../utils/ModernParty';
 
 export class CosmeticsActions {
     private apiService: FortniteAPIService;
@@ -15,7 +16,7 @@ export class CosmeticsActions {
         if (!client.party) return '❌ Le bot n\'est pas dans un groupe.';
 
         try {
-            await client.party.me.setOutfit(item.id);
+            await ModernParty.setLoadout(client, { outfit: item.id });
             return `✅ Skin défini sur : **${item.name}**`;
         } catch (e: any) {
              return `❌ Erreur changement skin: ${e.message}`;
@@ -26,7 +27,7 @@ export class CosmeticsActions {
         if (!client.party) return '❌ Le bot n\'est pas dans un groupe.';
 
         if (['none', 'vide', 'aucun', 'sac'].includes(query.toLowerCase())) {
-             await client.party.me.setBackpack('');
+             await ModernParty.setLoadout(client, { backpack: '' });
              return '✅ Sac à dos retiré.';
         }
 
@@ -34,7 +35,7 @@ export class CosmeticsActions {
         if (!item) return `❌ Sac "${query}" introuvable.`;
 
         try {
-            await client.party.me.setBackpack(item.id);
+            await ModernParty.setLoadout(client, { backpack: item.id });
             return `✅ Sac défini sur : **${item.name}**`;
         } catch (e: any) {
              return `❌ Erreur changement sac: ${e.message}`;
@@ -48,7 +49,7 @@ export class CosmeticsActions {
         if (!client.party) return '❌ Le bot n\'est pas dans un groupe.';
 
         try {
-            await client.party.me.setPickaxe(item.id);
+            await ModernParty.setLoadout(client, { pickaxe: item.id });
             return `✅ Pioche définie sur : **${item.name}**`;
         } catch (e: any) {
              return `❌ Erreur changement pioche: ${e.message}`;
@@ -62,7 +63,7 @@ export class CosmeticsActions {
         if (!client.party) return '❌ Le bot n\'est pas dans un groupe.';
 
         try {
-            await client.party.me.setEmote(item.id);
+            await ModernParty.setEmote(client, item.id);
             return `💃 Emote : **${item.name}**`;
         } catch (e: any) {
              return `❌ Erreur emote: ${e.message}`;
@@ -72,7 +73,7 @@ export class CosmeticsActions {
     async clearEmote(client: Client): Promise<string> {
         if (!client.party) return '❌ Le bot n\'est pas dans un groupe.';
         try {
-            await client.party.me.clearEmote();
+            await ModernParty.clearEmote(client);
             return '⏹️ Danse arrêtée.';
         } catch (e: any) {
             return `❌ Erreur: ${e.message}`;
@@ -82,7 +83,7 @@ export class CosmeticsActions {
     async setLevel(client: Client, level: number): Promise<string> {
         if (!client.party) return '❌ Le bot n\'est pas dans un groupe.';
         try {
-            await client.party.me.setLevel(level);
+            await ModernParty.setLevel(client, level);
             return `✅ Niveau défini sur : **${level}**`;
         } catch (e: any) {
             return `❌ Erreur: ${e.message}`;

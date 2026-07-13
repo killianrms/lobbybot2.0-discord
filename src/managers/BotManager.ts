@@ -8,6 +8,9 @@ import { PartyActions } from '../actions/PartyActions';
 import { SocialActions } from '../actions/SocialActions';
 import { CosmeticsActions } from '../actions/CosmeticsActions';
 import { sendAlert } from '../utils/AlertManager';
+import { sendEOSPresence } from '../utils/EOSPresence';
+import * as ModernParty from '../utils/ModernParty';
+import * as SecureChat from '../utils/SecureChat';
 
 export class BotManager {
     private bots: Map<string, any> = new Map();
@@ -15,13 +18,14 @@ export class BotManager {
     private dbManager: DatabaseManager;
     private cosmeticManagers: Map<string, CosmeticManager> = new Map();
     private sentMessageIds: Map<string, Set<string>> = new Map();
+    private eosPresenceTimers: Map<string, NodeJS.Timeout> = new Map();
     private adminManager: AdminManager;
     private commandManager: CommandManager;
 
     // Global config (managed from admin dashboard)
-    public globalStatus: string = 'Utilisez le code créateur : aeroz';
-    public joinMsg: string = '';
-    public addMsg: string = '';
+    public globalStatus: string = 'USE CODE CREATOR: aeroz';
+    public joinMsg: string = 'Join my Discord: https://discord.gg/SarmtBh3Gu';
+    public addMsg: string = 'Thanks for adding me! Use creator code "aeroz" and join our Discord: https://discord.gg/SarmtBh3Gu';
 
     // Actions
     private partyActions: PartyActions;
@@ -94,6 +98,19 @@ export class BotManager {
     private setupBotEvents(bot: Client, account: BotAccount) {
         const identifier = account.pseudo || account.email;
 
+        // La présence XMPP de fnbr n'est plus lue par le client Fortnite in-game
+        // (migration EOS) : sans PATCH de présence EOS, le bot reste affiché
+        // "Dans le launcher" et n'est pas rejoignable. On double donc chaque
+        // setStatus() — y compris les appels internes de fnbr sur les événements
+        // de party — d'un envoi de présence EOS.
+        const originalSetStatus = bot.setStatus.bind(bot);
+        (bot as any).setStatus = (status?: any, onlineType?: any, friend?: any) => {
+            const result = originalSetStatus(status, onlineType, friend);
+            // Un envoi ciblé à un seul ami (3e argument) ne change pas la présence globale
+            if (!friend) this.scheduleEOSPresence(bot, account);
+            return result;
+        };
+
         // Gestion de la déconnexion et reconnexion automatique
         bot.on('disconnected', async () => {
             console.log(`[${identifier}] ⚠️ Déconnecté`);
@@ -140,12 +157,25 @@ export class BotManager {
             try {
                 await pendingFriend.accept();
                 console.log(`[${identifier}] 🤝 Demande d'ami acceptée de: ${pendingFriend.displayName}`);
-                // Envoyer le message d'ajout si configuré
+                // Repousser le statut directement au nouvel ami : le broadcast de présence
+                // envoyé au moment du "ready" ne couvre que le roster déjà présent à cet
+                // instant-là, donc un ami ajouté après continue de voir "In the launcher"
+                // (aucune présence Fortnite jamais reçue pour lui) tant qu'on ne lui pousse
+                // pas un statut explicite maintenant que la relation d'amitié existe.
+                try {
+                    bot.setStatus(this.globalStatus, undefined, pendingFriend.id);
+                } catch (e) {}
+                // Envoyer le message d'ajout si configuré.
+                // PendingFriend n'a PAS de sendMessage() dans fnbr 4 (seul Friend l'a) :
+                // on passe par le whisper EOS direct qui n'exige pas que la friend list
+                // locale soit déjà rafraîchie après l'accept.
                 if (this.addMsg) {
                     try {
-                        await (pendingFriend as any).sendMessage(this.addMsg);
+                        await SecureChat.whisper(bot, pendingFriend.id, this.addMsg);
                         console.log(`[${identifier}] 💬 Message d'ajout envoyé à ${pendingFriend.displayName}`);
-                    } catch (e) {}
+                    } catch (e: any) {
+                        console.error(`[${identifier}] ❌ Échec message d'ajout à ${pendingFriend.displayName}: ${e.message}`);
+                    }
                 }
             } catch (error: any) {
                 console.error(`[${identifier}] ❌ Erreur acceptation ami:`, error.message);
@@ -161,7 +191,14 @@ export class BotManager {
                     this.cosmeticManagers.set(account.email, cosmeticManager);
                     console.log(`[${identifier}] 🎨 CosmeticManager initialisé`);
                 }
+                // Chaque nouvelle party repart avec un meta vierge : réappliquer le loadout
+                await this.applyDefaultLoadout(bot, identifier);
                 return;
+            }
+            // Mode !hide actif : fnbr vient de réécrire les squad assignments avec
+            // tous les membres, réappliquer le masquage
+            if (ModernParty.isHidden(bot)) {
+                try { await ModernParty.reapplyHidden(bot); } catch (e) {}
             }
             // Un autre joueur rejoint : lui envoyer une demande d'ami
             try {
@@ -171,8 +208,24 @@ export class BotManager {
             // Envoyer le message de lobby si configuré
             if (this.joinMsg) {
                 try {
-                    await (bot as any).party?.chat?.send(this.joinMsg);
-                } catch (e) {}
+                    await SecureChat.sendPartyMessage(bot, this.joinMsg);
+                    console.log(`[${identifier}] 💬 Message de lobby envoyé`);
+                } catch (e: any) {
+                    console.error(`[${identifier}] ❌ Échec message de lobby: ${e.message}`);
+                }
+            }
+        });
+
+        // Rappel du message de lobby quand quelqu'un part (utile en gros groupe)
+        (bot as any).on('party:member:left', async (member: any) => {
+            if (member.id === bot.user?.self?.id) return;
+            if (this.joinMsg) {
+                try {
+                    await SecureChat.sendPartyMessage(bot, this.joinMsg);
+                    console.log(`[${identifier}] 💬 Rappel lobby envoyé (départ de ${member.displayName})`);
+                } catch (e: any) {
+                    console.error(`[${identifier}] ❌ Échec rappel lobby: ${e.message}`);
+                }
             }
         });
 
@@ -195,7 +248,11 @@ export class BotManager {
                 content: realMessage,
                 author: message.author,
                 reply: async (text: string) => {
-                    try { await message.reply(text); } catch (e) {}
+                    try {
+                        await SecureChat.sendPartyMessage(bot, text);
+                    } catch (e: any) {
+                        console.error(`[${identifier}] ❌ Échec réponse lobby: ${e.message}`);
+                    }
                 }
             };
 
@@ -214,11 +271,26 @@ export class BotManager {
             }
 
             console.log(`[${identifier}] 💬 [DM] ${message.author.displayName}: ${message.content}`);
-            await this.commandManager.handleMessage(bot, message);
+            // Réponse via whisper signé : le reply de fnbr (non signé) n'est plus affiché in-game
+            const secureMessage = {
+                content: message.content,
+                author: message.author,
+                reply: async (text: string) => {
+                    try {
+                        await SecureChat.whisper(bot, message.author.id, text);
+                    } catch (e: any) {
+                        console.error(`[${identifier}] ❌ Échec réponse DM: ${e.message}`);
+                    }
+                }
+            };
+            await this.commandManager.handleMessage(bot, secureMessage);
         });
 
-        // Accepter les invitations de groupe
-        (bot as any).on('party:invitation', async (invitation: any) => {
+        // Accepter les invitations de groupe.
+        // ATTENTION : l'événement fnbr s'appelle 'party:invite' — avec un autre nom,
+        // fnbr voit listenerCount('party:invite') === 0 et jette le PING sans le traiter,
+        // donc le bot ne reçoit jamais aucune invitation.
+        (bot as any).on('party:invite', async (invitation: any) => {
             console.log(`[${identifier}] 📨 Invitation de ${invitation.sender?.displayName}`);
             try {
                 await invitation.accept();
@@ -232,6 +304,47 @@ export class BotManager {
         (bot as any).on('message:chat', async (message: any) => {
             await this.commandManager.handleMessage(bot, message);
         });
+    }
+
+    /**
+     * Applique le loadout par défaut du bot (skin/sac/pioche/niveau) dans sa party.
+     * Surchargeable via .env : DEFAULT_SKIN, DEFAULT_BACKPACK, DEFAULT_PICKAXE, DEFAULT_LEVEL.
+     */
+    private async applyDefaultLoadout(bot: Client, identifier: string): Promise<void> {
+        const me: any = (bot as any).party?.me;
+        if (!me) return;
+
+        const skin = process.env.DEFAULT_SKIN || 'CID_028_Athena_Commando_F'; // Renegade Raider
+        const backpack = process.env.DEFAULT_BACKPACK || '';
+        const pickaxe = process.env.DEFAULT_PICKAXE || '';
+        const level = parseInt(process.env.DEFAULT_LEVEL || '100', 10);
+
+        try {
+            await ModernParty.setLoadout(bot, {
+                outfit: skin,
+                ...(backpack ? { backpack } : {}),
+                ...(pickaxe ? { pickaxe } : {}),
+            });
+            if (!isNaN(level) && level > 0) await ModernParty.setLevel(bot, level);
+            console.log(`[${identifier}] 👗 Loadout par défaut appliqué (${skin}, niveau ${level})`);
+        } catch (e: any) {
+            console.error(`[${identifier}] ❌ Loadout par défaut: ${e.message}`);
+        }
+    }
+
+    /**
+     * Envoi débouncé de la présence EOS : un join/leave de party déclenche plusieurs
+     * setStatus() d'affilée, on ne publie que l'état final (rate-limit Epic).
+     */
+    private scheduleEOSPresence(bot: Client, account: BotAccount): void {
+        const existing = this.eosPresenceTimers.get(account.email);
+        if (existing) clearTimeout(existing);
+        this.eosPresenceTimers.set(account.email, setTimeout(() => {
+            this.eosPresenceTimers.delete(account.email);
+            sendEOSPresence(bot).catch((e: any) => {
+                console.error(`[${account.pseudo || account.email}] ⚠️ Présence EOS: ${e.message}`);
+            });
+        }, 1500));
     }
 
     private async reconnectBot(account: BotAccount): Promise<void> {
@@ -265,6 +378,11 @@ export class BotManager {
         this.bots.delete(email);
         this.cosmeticManagers.delete(email);
         this.sentMessageIds.delete(email);
+        const pendingPresence = this.eosPresenceTimers.get(email);
+        if (pendingPresence) {
+            clearTimeout(pendingPresence);
+            this.eosPresenceTimers.delete(email);
+        }
 
         console.log(`[${identifier}] ✅ Bot arrêté`);
     }
@@ -380,7 +498,7 @@ export class BotManager {
         return availableBots[0];
     }
 
-    async addFriendOnAvailableBot(targetUsername: string): Promise<'SUCCESS' | 'ERROR' | 'FULL'> {
+    async addFriendOnAvailableBot(targetUsername: string): Promise<'SUCCESS' | 'ERROR' | 'FULL' | 'ALREADY_FRIENDS'> {
         console.log(`[BotManager] Trying to add friend: ${targetUsername}`);
 
         const botInstance = this.getBestBot();
@@ -402,6 +520,10 @@ export class BotManager {
             console.log(`[${identifier}] ✅ Friend request sent!`);
             return 'SUCCESS';
         } catch (error: any) {
+            if (error?.name === 'DuplicateFriendshipError') {
+                console.log(`[${identifier}] ℹ️ ${targetUsername} est déjà ami`);
+                return 'ALREADY_FRIENDS';
+            }
             console.error(`[${identifier}] ❌ Failed to add friend:`, error.message);
             return 'ERROR';
         }
@@ -433,7 +555,10 @@ export class BotManager {
      * Apply global config to all connected bots immediately.
      */
     applyGlobalConfig(config: { status?: string; joinMsg?: string; addMsg?: string }): void {
-        if (config.status !== undefined) {
+        // Le dashboard renvoie la config globale à chaque manager:login (toutes les 30s) même
+        // si rien n'a changé — on ignore silencieusement les valeurs identiques pour éviter de
+        // spammer les logs et de rappeler setStatus() sur chaque bot inutilement (rate-limit Epic).
+        if (config.status !== undefined && config.status !== this.globalStatus) {
             this.globalStatus = config.status;
             // Apply status to all currently connected bots
             for (const instance of this.bots.values()) {
@@ -445,11 +570,11 @@ export class BotManager {
                 }
             }
         }
-        if (config.joinMsg !== undefined) {
+        if (config.joinMsg !== undefined && config.joinMsg !== this.joinMsg) {
             this.joinMsg = config.joinMsg;
             console.log(`[BotManager] 💬 Join message mis à jour`);
         }
-        if (config.addMsg !== undefined) {
+        if (config.addMsg !== undefined && config.addMsg !== this.addMsg) {
             this.addMsg = config.addMsg;
             console.log(`[BotManager] 💬 Add message mis à jour`);
         }

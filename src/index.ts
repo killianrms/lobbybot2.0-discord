@@ -6,6 +6,8 @@ import { DiscordManager } from './managers/DiscordManager';
 import { SocketManager } from './managers/SocketManager';
 import { UserManager } from './managers/UserManager';
 import { APIManager } from './managers/APIManager';
+import { GeneratorManager } from './managers/GeneratorManager';
+import { BackupManager } from './managers/BackupManager';
 import { sendAlert } from './utils/AlertManager';
 
 // Filet de sécurité : capture tout ce qui n'est pas géré ailleurs (DB, Discord, Fortnite...)
@@ -32,6 +34,8 @@ async function main() {
     const botManager = new BotManager(dbManager);
     const userManager = new UserManager(dbManager);
     const apiManager = new APIManager();
+    const generatorManager = new GeneratorManager(dbManager, botManager);
+    const backupManager = new BackupManager(dbManager);
 
     // Corrected arg order: BotManager first, then URL
     const socketManager = new SocketManager(
@@ -42,7 +46,7 @@ async function main() {
     // Connect socket
     socketManager.connect();
 
-    const discordManager = new DiscordManager(botManager, userManager, apiManager);
+    const discordManager = new DiscordManager(botManager, userManager, apiManager, dbManager, generatorManager, backupManager);
 
     // 2. Start Services
     await botManager.launchAllBots();
@@ -54,6 +58,7 @@ async function main() {
     // Check DB every 5min for new bots added externally
     botManager.startDBSync();
     botManager.startHealthCheck();
+    backupManager.startAutoBackup();
 
     await discordManager.start(process.env.DISCORD_TOKEN || '');
 }

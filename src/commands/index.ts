@@ -16,8 +16,9 @@ import { LockerCommand } from './LockerCommand';
 import { SetLanguageCommand } from './SetLanguageCommand';
 import { HelpCommand } from './HelpCommand';
 import { PingCommand } from './PingCommand';
+import { CreateBotCommand } from './CreateBotCommand';
 
-export const CommandList: Command[] = [
+const baseCommands: Command[] = [
     LoginCommand,
     AddCommand,
     AdminCommand,
@@ -34,7 +35,13 @@ export const CommandList: Command[] = [
     LockerCommand,
     SetLanguageCommand,
     HelpCommand,
-    PingCommand
+    PingCommand,
 ];
+
+// /createbot reste caché tant que fn_account_generator n'est pas fiable à 100%
+// (voir CREATEBOT_ENABLED dans .env) — pas la peine d'exposer une commande qui échoue.
+export const CommandList: Command[] = process.env.CREATEBOT_ENABLED === 'true'
+    ? [...baseCommands, CreateBotCommand]
+    : baseCommands;
 
 export { Command } from './Command';

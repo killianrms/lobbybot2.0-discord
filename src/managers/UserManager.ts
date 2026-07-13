@@ -233,7 +233,8 @@ export class UserManager {
             await (userClient as any).friend.add(targetPseudo);
             await userClient.logout();
             return 'SUCCESS';
-        } catch (e) {
+        } catch (e: any) {
+            if (e?.name === 'DuplicateFriendshipError') return 'ALREADY_FRIENDS';
             console.error(e);
             return 'ERROR';
         }

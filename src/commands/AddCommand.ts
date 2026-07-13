@@ -23,6 +23,8 @@ export const AddCommand: Command = {
                 await interaction.editReply(`✅ Demande d'ami envoyée à **${target}** ! (Veuillez accepter)`);
             } else if (result === 'FULL') {
                 await interaction.editReply(`⚠️ Tous les bots sont pleins.`);
+            } else if (result === 'ALREADY_FRIENDS') {
+                await interaction.editReply(`ℹ️ **${target}** est déjà ami avec le bot !`);
             } else {
                 await interaction.editReply(`❌ Erreur technique.`);
             }
@@ -41,6 +43,8 @@ export const AddCommand: Command = {
                 await interaction.editReply(`✅ Bot **${bestBot.account.pseudo}** ajouté en ami automatiquement !`);
             } else if (result === 'NOT_LOGGED_IN') {
                 await interaction.editReply(`ℹ️ Vous n'êtes pas connecté. Utilisez \`/login <code>\` ou spécifiez votre pseudo.`);
+            } else if (result === 'ALREADY_FRIENDS') {
+                await interaction.editReply(`ℹ️ Vous êtes déjà ami avec **${bestBot.account.pseudo}** !`);
             } else {
                 await interaction.editReply(`❌ Erreur lors de l'ajout automatique.`);
             }

@@ -1,4 +1,5 @@
-import { Client } from 'fnbr';
+import { Client, Enums } from 'fnbr';
+import * as ModernParty from '../utils/ModernParty';
 
 export class PartyActions {
 
@@ -15,10 +16,12 @@ export class PartyActions {
     async setPrivacy(client: Client, privacy: string): Promise<string> {
         if (!client.party) return '❌ Pas dans un groupe';
 
+        // fnbr attend un objet PartyPrivacy complet (partyType, presencePermission…),
+        // pas une simple chaîne — une chaîne casse silencieusement le patch de privacy.
         const privacyMap: any = {
-            'public': 'Public',
-            'private': 'Private',
-            'friends': 'Friends'
+            'public': Enums.PartyPrivacy.PUBLIC,
+            'private': Enums.PartyPrivacy.PRIVATE,
+            'friends': Enums.PartyPrivacy.FRIENDS
         };
 
         const targetPrivacy = privacyMap[privacy.toLowerCase()];
@@ -26,7 +29,7 @@ export class PartyActions {
 
         try {
             await client.party.setPrivacy(targetPrivacy);
-            return `🔒 Confidentialité définie sur : **${targetPrivacy}**`;
+            return `🔒 Confidentialité définie sur : **${privacy.toLowerCase()}**`;
         } catch (e: any) {
             return `❌ Erreur: ${e.message}`;
         }
@@ -67,8 +70,7 @@ export class PartyActions {
     async setReady(client: Client, isReady: boolean): Promise<string> {
         if (!client.party) return '❌ Pas dans un groupe';
         try {
-            // @ts-ignore
-            if (client.party.me.setReadiness) await client.party.me.setReadiness(isReady);
+            await ModernParty.setReady(client, isReady);
             return isReady ? '✅ Prêt !' : '❌ Pas prêt.';
         } catch (e: any) {
             return `❌ Erreur: ${e.message}`;

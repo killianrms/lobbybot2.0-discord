@@ -18,11 +18,13 @@ import { CSVManager } from './CSVManager';
 export class DatabaseManager {
     private db: Database.Database;
     private csvManager: CSVManager;
+    public readonly dbPath: string;
 
     constructor(csvManager: CSVManager) {
         this.csvManager = csvManager;
 
         const dbPath = process.env.DB_PATH || path.join(__dirname, '../../data/lobbybot.db');
+        this.dbPath = dbPath;
         fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 
         this.db = new Database(dbPath, { timeout: 30000 });
@@ -60,6 +62,15 @@ export class DatabaseManager {
             );
         `);
         console.log('[Database] Tables ready');
+
+        // Migration : owner_discord_id (bots générés en self-service via /createbot).
+        // La table est aussi écrite par fn_account_generator (Python), qui ne connaît
+        // pas cette colonne — on l'ajoute nous-mêmes si elle manque.
+        const columns = this.db.prepare("PRAGMA table_info(epic_accounts)").all() as any[];
+        if (!columns.some(c => c.name === 'owner_discord_id')) {
+            this.db.exec('ALTER TABLE epic_accounts ADD COLUMN owner_discord_id TEXT');
+            console.log('[Database] Migration: colonne owner_discord_id ajoutée');
+        }
 
         await this.checkMigration();
     }
@@ -132,6 +143,34 @@ export class DatabaseManager {
         this.db.prepare('DELETE FROM epic_accounts WHERE email = ?').run(email);
     }
 
+    public async getBotByOwner(discordId: string): Promise<BotAccount | null> {
+        const row = this.db.prepare('SELECT * FROM epic_accounts WHERE owner_discord_id = ?').get(discordId) as any;
+        if (!row) return null;
+        return {
+            email: row.email,
+            pseudo: row.pseudo,
+            password: '',
+            ownerDiscordId: row.owner_discord_id,
+            deviceAuth: { deviceId: row.device_id, accountId: row.account_id, secret: row.secret_id }
+        };
+    }
+
+    public async getBotByEmail(email: string): Promise<BotAccount | null> {
+        const row = this.db.prepare('SELECT * FROM epic_accounts WHERE email = ?').get(email) as any;
+        if (!row) return null;
+        return {
+            email: row.email,
+            pseudo: row.pseudo,
+            password: '',
+            ownerDiscordId: row.owner_discord_id,
+            deviceAuth: { deviceId: row.device_id, accountId: row.account_id, secret: row.secret_id }
+        };
+    }
+
+    public async setBotOwner(email: string, discordId: string): Promise<void> {
+        this.db.prepare('UPDATE epic_accounts SET owner_discord_id = ? WHERE email = ?').run(discordId, email);
+    }
+
     // --- USER MANAGEMENT ---
 
     public async saveUser(discordId: string, pseudo: string, deviceAuth: any): Promise<void> {
@@ -190,5 +229,76 @@ export class DatabaseManager {
     public async getLanguage(discordId: string): Promise<string> {
         const row = this.db.prepare('SELECT language FROM users WHERE discord_id = ?').get(discordId) as any;
         return row?.language || 'en';
+    }
+
+    // --- BACKUP / RESTORE (dump brut des deux tables, pour ne rien perdre en cas de migration/incident) ---
+
+    public async exportRaw(): Promise<{ exported_at: string; epic_accounts: any[]; users: any[] }> {
+        return {
+            exported_at: new Date().toISOString(),
+            epic_accounts: this.db.prepare('SELECT * FROM epic_accounts').all(),
+            users: this.db.prepare('SELECT * FROM users').all(),
+        };
+    }
+
+    /**
+     * Réimporte un dump produit par exportRaw(). Upsert par email (epic_accounts) / discord_id (users) —
+     * ne supprime rien, ne fait qu'ajouter/mettre à jour. Retourne le nombre de lignes traitées.
+     */
+    public async importRaw(dump: { epic_accounts?: any[]; users?: any[] }): Promise<{ bots: number; users: number }> {
+        let bots = 0;
+        let users = 0;
+
+        const upsertBot = this.db.prepare(`
+            INSERT INTO epic_accounts (email, pseudo, password_enc, secret_id, device_id, account_id, is_active, owner_discord_id)
+            VALUES (@email, @pseudo, @password_enc, @secret_id, @device_id, @account_id, @is_active, @owner_discord_id)
+            ON CONFLICT(email) DO UPDATE SET
+                pseudo = excluded.pseudo,
+                password_enc = excluded.password_enc,
+                secret_id = excluded.secret_id,
+                device_id = excluded.device_id,
+                account_id = excluded.account_id,
+                is_active = excluded.is_active,
+                owner_discord_id = excluded.owner_discord_id
+        `);
+        for (const row of dump.epic_accounts || []) {
+            if (!row.email) continue;
+            upsertBot.run({
+                email: row.email,
+                pseudo: row.pseudo ?? null,
+                password_enc: row.password_enc ?? null,
+                secret_id: row.secret_id ?? null,
+                device_id: row.device_id ?? null,
+                account_id: row.account_id ?? null,
+                is_active: row.is_active ?? 1,
+                owner_discord_id: row.owner_discord_id ?? null,
+            });
+            bots++;
+        }
+
+        const upsertUser = this.db.prepare(`
+            INSERT INTO users (discord_id, epic_pseudo, device_id, account_id, secret, language)
+            VALUES (@discord_id, @epic_pseudo, @device_id, @account_id, @secret, @language)
+            ON CONFLICT(discord_id) DO UPDATE SET
+                epic_pseudo = excluded.epic_pseudo,
+                device_id = excluded.device_id,
+                account_id = excluded.account_id,
+                secret = excluded.secret,
+                language = excluded.language
+        `);
+        for (const row of dump.users || []) {
+            if (!row.discord_id) continue;
+            upsertUser.run({
+                discord_id: row.discord_id,
+                epic_pseudo: row.epic_pseudo ?? null,
+                device_id: row.device_id ?? null,
+                account_id: row.account_id ?? null,
+                secret: row.secret ?? null,
+                language: row.language ?? 'en',
+            });
+            users++;
+        }
+
+        return { bots, users };
     }
 }

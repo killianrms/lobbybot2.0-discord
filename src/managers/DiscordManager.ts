@@ -5,19 +5,28 @@ import { APIManager } from './APIManager';
 import { getTranslation } from '../utils/locales';
 import { CommandList } from '../commands';
 import { sendAlert } from '../utils/AlertManager';
+import { DatabaseManager } from './DatabaseManager';
+import { GeneratorManager } from './GeneratorManager';
+import { BackupManager } from './BackupManager';
 
 export class DiscordManager {
     private client: Client;
     private botManager: BotManager;
     private userManager: UserManager;
     private apiManager: APIManager;
+    private dbManager: DatabaseManager;
+    private generatorManager: GeneratorManager;
+    private backupManager: BackupManager;
     private cooldowns: Map<string, number> = new Map();
     private readonly COOLDOWN_MS = 3000; // 3 secondes entre commandes
 
-    constructor(botManager: BotManager, userManager: UserManager, apiManager: APIManager) {
+    constructor(botManager: BotManager, userManager: UserManager, apiManager: APIManager, dbManager: DatabaseManager, generatorManager: GeneratorManager, backupManager: BackupManager) {
         this.botManager = botManager;
         this.userManager = userManager;
         this.apiManager = apiManager;
+        this.dbManager = dbManager;
+        this.generatorManager = generatorManager;
+        this.backupManager = backupManager;
         this.client = new Client({
             intents: [
                 GatewayIntentBits.Guilds,
@@ -74,7 +83,7 @@ export class DiscordManager {
         });
 
         // SLASH COMMAND REGISTRATION ON READY
-        this.client.on('ready', async () => {
+        this.client.on('clientReady', async () => {
             const commands = CommandList.map(c => c.data);
 
             const rest = new REST({ version: '10' }).setToken(this.client.token || '');
@@ -192,7 +201,10 @@ export class DiscordManager {
                 await command.execute(interaction, {
                     botManager: this.botManager,
                     userManager: this.userManager,
-                    apiManager: this.apiManager
+                    apiManager: this.apiManager,
+                    dbManager: this.dbManager,
+                    generatorManager: this.generatorManager,
+                    backupManager: this.backupManager
                 }, userLang);
             } catch (error) {
                 console.error('[Discord] Command error:', error);

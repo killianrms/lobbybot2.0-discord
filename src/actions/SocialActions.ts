@@ -16,19 +16,9 @@ export class SocialActions {
     async removeFriend(client: Client, query: string): Promise<string> {
         if (!query) return 'Usage: !remove <pseudo>';
         
-        let friendId = '';
-        // Cast to any to access internal friends map if types are missing
-        const friendsList = (client as any).friends;
-        
-        if (friendsList) {
-            friendsList.forEach((friend: any) => {
-                if (friend.displayName.toLowerCase() === query.toLowerCase()) {
-                    friendId = friend.id;
-                }
-            });
-        }
-
-        if (!friendId) return `❌ Ami "${query}" introuvable.`;
+        const friend = client.friend.list.find((f: any) => f.displayName?.toLowerCase() === query.toLowerCase());
+        if (!friend) return `❌ Ami "${query}" introuvable.`;
+        const friendId = friend.id;
 
         try {
             await client.friend.remove(friendId);

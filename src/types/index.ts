@@ -11,6 +11,7 @@ export interface BotAccount {
     email: string;
     password: string;
     deviceAuth?: DeviceAuth;
+    ownerDiscordId?: string;
 }
 
 export interface BotInstance {

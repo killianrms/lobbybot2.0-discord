@@ -1,4 +1,5 @@
 import { Client } from 'fnbr';
+import * as ModernParty from '../utils/ModernParty';
 import { CosmeticsActions } from '../actions/CosmeticsActions';
 import { PartyActions } from '../actions/PartyActions';
 import { SocialActions } from '../actions/SocialActions';
@@ -7,8 +8,10 @@ export class CommandManager {
     private cosmetics: CosmeticsActions;
     private party: PartyActions;
     private social: SocialActions;
-    // Simple admin list for now, ideally passed via config
-    private admins: string[] = ['DepInfo']; 
+    private admins: string[] = (process.env.LOBBY_ADMIN_PSEUDOS || 'AerozOff')
+        .split(',')
+        .map(p => p.trim().toLowerCase())
+        .filter(Boolean);
 
     constructor() {
         this.cosmetics = new CosmeticsActions();
@@ -66,6 +69,46 @@ export class CommandManager {
                     response = await this.cosmetics.setLevel(client, lvl);
                     break;
 
+                case 'copy':
+                case 'copie': {
+                    if (!client.party) { response = '❌ Pas dans un groupe'; break; }
+                    // Sans argument : copier le loadout de l'auteur de la commande
+                    const targetName = query || author;
+                    const member = client.party.members.find((m: any) => m.displayName?.toLowerCase().includes(targetName.toLowerCase()));
+                    if (!member) { response = `❌ Joueur "${targetName}" introuvable dans le lobby.`; break; }
+                    if (member.id === client.user?.self?.id) { response = '❌ Je ne peux pas me copier moi-même.'; break; }
+                    try {
+                        await ModernParty.copyLoadoutFrom(client, member);
+                        response = `🎭 Loadout copié sur **${member.displayName}** !`;
+                    } catch (e: any) {
+                        response = `❌ ${e.message}`;
+                    }
+                    break;
+                }
+
+                case 'hide': {
+                    // Cache tout le monde sauf le bot et l'auteur ; "!hide all" cache aussi l'auteur
+                    const keepIds = query.toLowerCase() === 'all' ? [] : [message.author.id];
+                    try {
+                        await ModernParty.setHidden(client, true, keepIds);
+                        response = query.toLowerCase() === 'all'
+                            ? '🙈 Tous les membres sont cachés.'
+                            : '🙈 Membres cachés (sauf toi). !show pour rétablir.';
+                    } catch (e: any) {
+                        response = `❌ ${e.message}`;
+                    }
+                    break;
+                }
+                case 'show':
+                case 'unhide':
+                    try {
+                        await ModernParty.setHidden(client, false);
+                        response = '👀 Tous les membres sont de nouveau visibles.';
+                    } catch (e: any) {
+                        response = `❌ ${e.message}`;
+                    }
+                    break;
+
                 // PARTY
                 case 'ready':
                 case 'pret':
@@ -83,7 +126,8 @@ export class CommandManager {
                     if (this.isAdmin(author)) response = await this.party.kickMember(client, query);
                     break;
                 case 'promote':
-                    if (this.isAdmin(author)) response = await this.party.promoteMember(client, query);
+                    // Sans argument : promouvoir l'auteur de la commande
+                    if (this.isAdmin(author)) response = await this.party.promoteMember(client, query || author);
                     break;
                 case 'privacy':
                     if (this.isAdmin(author)) response = await this.party.setPrivacy(client, query);
@@ -110,6 +154,8 @@ export class CommandManager {
   !emote <nom> - Jouer une danse
   !stopdanse - Arrêter la danse
   !level <n> - Changer le niveau
+  !copy [pseudo] - Copier ton loadout (skin/sac/pioche)
+  !hide [all] / !show - Cacher/afficher les membres
 🎮 Lobby:
   !ready / !unready - Prêt / Pas prêt
   !leave - Quitter le groupe
@@ -134,7 +180,6 @@ export class CommandManager {
     }
 
     private isAdmin(username: string): boolean {
-        // TODO: Load admins from central config
-        return true; // For now allow all for testing, or restrict
+        return this.admins.includes(username.toLowerCase());
     }
 }

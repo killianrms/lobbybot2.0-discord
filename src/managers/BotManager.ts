@@ -649,6 +649,30 @@ export class BotManager {
                     if (isNaN(lvl) || lvl < 1) { result = '❌ Usage: level <nombre>'; break; }
                     result = await this.cosmeticsActions.setLevel(client, lvl);
                     break;
+                case 'hide':
+                    try {
+                        await ModernParty.setHidden(client, true, []);
+                        result = '🙈 Tout le monde est caché sauf le bot.';
+                    } catch (e: any) { result = `❌ ${e.message}`; }
+                    break;
+                case 'show':
+                case 'unhide':
+                    try {
+                        await ModernParty.setHidden(client, false);
+                        result = '👀 Membres de nouveau visibles.';
+                    } catch (e: any) { result = `❌ ${e.message}`; }
+                    break;
+                case 'copy': {
+                    if (!data) { result = '❌ Usage: copy <pseudo>'; break; }
+                    const target = (client as any).party?.members?.find((m: any) =>
+                        m.displayName?.toLowerCase().includes(String(data).toLowerCase()));
+                    if (!target) { result = `❌ Joueur "${data}" introuvable dans le lobby.`; break; }
+                    try {
+                        await ModernParty.copyLoadoutFrom(client, target);
+                        result = `🎭 Loadout copié sur ${target.displayName}.`;
+                    } catch (e: any) { result = `❌ ${e.message}`; }
+                    break;
+                }
                 default:
                     result = `❌ Action inconnue: ${action}`;
             }

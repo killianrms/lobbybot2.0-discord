@@ -204,7 +204,13 @@ export class BotManager {
             try {
                 await member.addFriend();
                 console.log(`[${identifier}] ➕ Demande d'ami envoyée à ${member.displayName}`);
-            } catch (e) {}
+            } catch (e: any) {
+                // Déjà amis = cas normal, silencieux ; le reste doit se voir
+                // (liste d'amis pleine à 1000, confidentialité du joueur…)
+                if (e?.name !== 'DuplicateFriendshipError') {
+                    console.error(`[${identifier}] ❌ Demande d'ami à ${member.displayName}: ${e.message}`);
+                }
+            }
             // Envoyer le message de lobby si configuré
             if (this.joinMsg) {
                 try {

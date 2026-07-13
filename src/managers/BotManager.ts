@@ -11,6 +11,7 @@ import { sendAlert } from '../utils/AlertManager';
 import { sendEOSPresence } from '../utils/EOSPresence';
 import * as ModernParty from '../utils/ModernParty';
 import * as SecureChat from '../utils/SecureChat';
+import * as FailedBotRegistry from '../utils/FailedBotRegistry';
 
 export class BotManager {
     private bots: Map<string, any> = new Map();
@@ -85,12 +86,16 @@ export class BotManager {
             await bot.login();
             instance.isConnected = true;
             console.log(`[${identifier}] ✅ Connecté!\n`);
+            FailedBotRegistry.clearFailure(account.email); // login réussi : oublier les échecs passés
             return true;
 
         } catch (error: any) {
             console.error(`[${identifier}] ❌ Erreur: ${error.message}`);
             this.bots.delete(account.email);
-            this.failedBots.add(account.email); // ne pas retenter ce bot
+            this.failedBots.add(account.email); // ne pas retenter ce bot cette session
+            // Trace persistante : un reset de device auth côté Epic est récupérable,
+            // un ban ne l'est pas — on garde le compte pour revue avant suppression
+            FailedBotRegistry.recordFailure(account.email, account.pseudo, error.message);
             return false;
         }
     }
@@ -193,6 +198,10 @@ export class BotManager {
                 }
                 // Chaque nouvelle party repart avec un meta vierge : réappliquer le loadout
                 await this.applyDefaultLoadout(bot, identifier);
+                // Le bot vient de rejoindre le lobby de quelqu'un d'autre : l'event
+                // party:member:joined ne se déclenche que pour les arrivées FUTURES,
+                // donc on friend-request tout de suite les membres déjà présents.
+                await this.friendRequestExistingMembers(bot, account, identifier);
                 return;
             }
             // Mode !hide actif : fnbr vient de réécrire les squad assignments avec
@@ -316,6 +325,27 @@ export class BotManager {
      * Applique le loadout par défaut du bot (skin/sac/pioche/niveau) dans sa party.
      * Surchargeable via .env : DEFAULT_SKIN, DEFAULT_BACKPACK, DEFAULT_PICKAXE, DEFAULT_LEVEL.
      */
+    /**
+     * Envoie une demande d'ami à tous les membres déjà présents dans la party
+     * (utile quand le bot REJOINT le lobby de quelqu'un : il ne verrait sinon que
+     * les arrivées suivantes). Espacé légèrement pour ne pas déclencher le rate-limit.
+     */
+    private async friendRequestExistingMembers(bot: Client, account: BotAccount, identifier: string): Promise<void> {
+        const members: any[] = Array.from((bot as any).party?.members?.values?.() ?? []);
+        for (const member of members) {
+            if (member.id === bot.user?.self?.id) continue;
+            try {
+                await member.addFriend();
+                console.log(`[${identifier}] ➕ Demande d'ami (membre présent) à ${member.displayName}`);
+            } catch (e: any) {
+                if (e?.name !== 'DuplicateFriendshipError') {
+                    console.error(`[${identifier}] ❌ Demande d'ami à ${member.displayName}: ${e.message}`);
+                }
+            }
+            await new Promise(r => setTimeout(r, 800));
+        }
+    }
+
     private async applyDefaultLoadout(bot: Client, identifier: string): Promise<void> {
         const me: any = (bot as any).party?.me;
         if (!me) return;

@@ -6,6 +6,8 @@ import { AdminManager } from './AdminManager';
 import { CommandManager } from './CommandManager';
 import { PartyActions } from '../actions/PartyActions';
 import { SocialActions } from '../actions/SocialActions';
+import { CosmeticsActions } from '../actions/CosmeticsActions';
+import { sendAlert } from '../utils/AlertManager';
 
 export class BotManager {
     private bots: Map<string, any> = new Map();
@@ -16,9 +18,15 @@ export class BotManager {
     private adminManager: AdminManager;
     private commandManager: CommandManager;
 
+    // Global config (managed from admin dashboard)
+    public globalStatus: string = 'Utilisez le code créateur : aeroz';
+    public joinMsg: string = '';
+    public addMsg: string = '';
+
     // Actions
     private partyActions: PartyActions;
     private socialActions: SocialActions;
+    private cosmeticsActions: CosmeticsActions;
 
     constructor(dbManager: DatabaseManager, adminManager?: AdminManager) {
         this.dbManager = dbManager;
@@ -28,19 +36,20 @@ export class BotManager {
         // Instantiate Actions
         this.partyActions = new PartyActions();
         this.socialActions = new SocialActions();
+        this.cosmeticsActions = new CosmeticsActions();
     }
 
-    async launchBot(account: BotAccount): Promise<void> {
+    async launchBot(account: BotAccount): Promise<boolean> {
         const identifier = account.pseudo || account.email;
 
         if (this.bots.has(account.email)) {
             // console.log(`[${identifier}] ⚠️  Bot déjà lancé`);
-            return;
+            return true;
         }
 
         if (!account.deviceAuth) {
             console.error(`[${identifier}] ❌ Pas de device auth trouvé`);
-            return;
+            return false;
         }
 
         try {
@@ -72,24 +81,55 @@ export class BotManager {
             await bot.login();
             instance.isConnected = true;
             console.log(`[${identifier}] ✅ Connecté!\n`);
+            return true;
 
         } catch (error: any) {
             console.error(`[${identifier}] ❌ Erreur: ${error.message}`);
             this.bots.delete(account.email);
             this.failedBots.add(account.email); // ne pas retenter ce bot
+            return false;
         }
     }
 
     private setupBotEvents(bot: Client, account: BotAccount) {
         const identifier = account.pseudo || account.email;
 
+        // Gestion de la déconnexion et reconnexion automatique
+        bot.on('disconnected', async () => {
+            console.log(`[${identifier}] ⚠️ Déconnecté`);
+            const instance = this.bots.get(account.email);
+            if (instance) {
+                instance.isConnected = false;
+            }
+        });
+
+        // Reconnexion automatique sur session close
+        (bot as any).on('session:close', async () => {
+            console.log(`[${identifier}] 🔄 Session fermée, tentative de reconnexion...`);
+            const instance = this.bots.get(account.email);
+            if (instance && !this.failedBots.has(account.email)) {
+                instance.isConnected = false;
+                setTimeout(async () => {
+                    try {
+                        await bot.login();
+                        instance.isConnected = true;
+                        console.log(`[${identifier}] ✅ Reconnecté!`);
+                    } catch (e: any) {
+                        console.error(`[${identifier}] ❌ Échec de reconnexion: ${e.message}`);
+                        // Réessayer dans 30s
+                        setTimeout(() => this.reconnectBot(account), 30000);
+                    }
+                }, 5000);
+            }
+        });
+
         // Bot prêt : définir le statut
         bot.on('ready', async () => {
             try {
                 await bot.user?.fetchSelf();
-                bot.setStatus("Utilisez le code créateur : aeroz");
+                bot.setStatus(this.globalStatus);
                 console.log(`[${identifier}] ✅ Bot connecté en tant que ${bot.user?.self?.displayName || 'Unknown'}`);
-                console.log(`[${identifier}] 🎮 Status défini : "Utilisez le code créateur : aeroz"`);
+                console.log(`[${identifier}] 🎮 Status défini : "${this.globalStatus}"`);
             } catch (error: any) {
                 console.error(`[${identifier}] ❌ Erreur ready:`, error.message);
             }
@@ -100,6 +140,13 @@ export class BotManager {
             try {
                 await pendingFriend.accept();
                 console.log(`[${identifier}] 🤝 Demande d'ami acceptée de: ${pendingFriend.displayName}`);
+                // Envoyer le message d'ajout si configuré
+                if (this.addMsg) {
+                    try {
+                        await (pendingFriend as any).sendMessage(this.addMsg);
+                        console.log(`[${identifier}] 💬 Message d'ajout envoyé à ${pendingFriend.displayName}`);
+                    } catch (e) {}
+                }
             } catch (error: any) {
                 console.error(`[${identifier}] ❌ Erreur acceptation ami:`, error.message);
             }
@@ -120,7 +167,12 @@ export class BotManager {
             try {
                 await member.addFriend();
                 console.log(`[${identifier}] ➕ Demande d'ami envoyée à ${member.displayName}`);
-            } catch (e) {
+            } catch (e) {}
+            // Envoyer le message de lobby si configuré
+            if (this.joinMsg) {
+                try {
+                    await (bot as any).party?.chat?.send(this.joinMsg);
+                } catch (e) {}
             }
         });
 
@@ -182,6 +234,24 @@ export class BotManager {
         });
     }
 
+    private async reconnectBot(account: BotAccount): Promise<void> {
+        const identifier = account.pseudo || account.email;
+        const instance = this.bots.get(account.email);
+
+        if (!instance || this.failedBots.has(account.email)) return;
+
+        try {
+            console.log(`[${identifier}] 🔄 Tentative de reconnexion...`);
+            await instance.client.login();
+            instance.isConnected = true;
+            console.log(`[${identifier}] ✅ Bot reconnecté!`);
+        } catch (e: any) {
+            console.error(`[${identifier}] ❌ Reconnexion échouée: ${e.message}`);
+            // Réessayer dans 1 minute
+            setTimeout(() => this.reconnectBot(account), 60000);
+        }
+    }
+
     async stopBot(email: string): Promise<void> {
         const instance = this.bots.get(email);
         if (!instance) {
@@ -228,6 +298,30 @@ export class BotManager {
                 }
             } catch (e: any) {
                 console.error('[BotManager] ❌ Erreur sync BD:', e.message);
+                sendAlert('db-sync-error', '🔴 Erreur de synchronisation BD', `\`\`\`${e.message}\`\`\``, 'critical');
+            }
+        }, intervalMs);
+    }
+
+    /**
+     * Vérifie périodiquement le nombre de bots actifs. Alerte si on tombe sous le seuil
+     * MIN_ACTIVE_BOTS_ALERT (déconnexion massive, credentials expirés en masse, etc.).
+     */
+    public startHealthCheck(intervalMs: number = 60_000): void {
+        const minActive = parseInt(process.env.MIN_ACTIVE_BOTS_ALERT || '1', 10);
+        console.log(`[BotManager] 🩺 Health check toutes les ${intervalMs / 1000}s (seuil: ${minActive} bot(s) actif(s) min)`);
+
+        setInterval(() => {
+            const total = this.bots.size;
+            const active = this.getActiveBots().filter(b => b.isConnected).length;
+
+            if (total > 0 && active < minActive) {
+                sendAlert(
+                    'low-active-bots',
+                    '🔴 Nombre de bots actifs trop bas',
+                    `**${active}/${total}** bot(s) actif(s) — seuil d'alerte: ${minActive}.\nVérifie les credentials Fortnite ou une éventuelle panne Epic.`,
+                    'critical'
+                );
             }
         }, intervalMs);
     }
@@ -242,8 +336,16 @@ export class BotManager {
 
     async addNewBot(account: BotAccount): Promise<void> {
         console.log(`[BotManager] Adding new bot: ${account.pseudo}`);
+
+        // On vérifie d'abord que le bot se connecte réellement avant de l'enregistrer en BD —
+        // pas la peine de garder des credentials invalides en base.
+        const connected = await this.launchBot(account);
+        if (!connected) {
+            this.failedBots.delete(account.email); // pas encore en DB, autoriser un nouvel essai plus tard
+            throw new Error('Connexion au compte Fortnite échouée (credentials invalides ou device auth expiré).');
+        }
+
         await this.dbManager.addBot(account);
-        await this.launchBot(account);
     }
 
     getActiveBots(): any[] {
@@ -262,7 +364,7 @@ export class BotManager {
         const bots = this.getActiveBots().filter(b => b.isConnected && b.client);
 
         const availableBots = bots.filter(b => {
-            const friendCount = b.client.friends ? b.client.friends.size : 0;
+            const friendCount = b.client.friend?.list ? b.client.friend.list.size : 0;
             return friendCount < 900;
         });
 
@@ -270,8 +372,8 @@ export class BotManager {
 
         // Sort by friend count ascending
         availableBots.sort((a, b) => {
-            const sizeA = a.client.friends ? a.client.friends.size : 0;
-            const sizeB = b.client.friends ? b.client.friends.size : 0;
+            const sizeA = a.client.friend?.list ? a.client.friend.list.size : 0;
+            const sizeB = b.client.friend?.list ? b.client.friend.list.size : 0;
             return sizeA - sizeB;
         });
 
@@ -312,7 +414,7 @@ export class BotManager {
         const connectedBots = this.getActiveBots().filter(b => b.isConnected && b.client);
 
         for (const botInstance of connectedBots) {
-            const friend = botInstance.client.friends.find((f: any) => f.displayName === targetUsername);
+            const friend = botInstance.client.friend.list.find((f: any) => f.displayName === targetUsername);
             if (friend) {
                 try {
                     await friend.remove();
@@ -327,22 +429,48 @@ export class BotManager {
         return removed;
     }
 
-    async executeAction(targetName: string, action: string, data: any): Promise<void> {
+    /**
+     * Apply global config to all connected bots immediately.
+     */
+    applyGlobalConfig(config: { status?: string; joinMsg?: string; addMsg?: string }): void {
+        if (config.status !== undefined) {
+            this.globalStatus = config.status;
+            // Apply status to all currently connected bots
+            for (const instance of this.bots.values()) {
+                if (instance.isConnected && instance.client) {
+                    try {
+                        instance.client.setStatus(this.globalStatus);
+                        console.log(`[${instance.account.pseudo}] 🎮 Status mis à jour: "${this.globalStatus}"`);
+                    } catch (e) {}
+                }
+            }
+        }
+        if (config.joinMsg !== undefined) {
+            this.joinMsg = config.joinMsg;
+            console.log(`[BotManager] 💬 Join message mis à jour`);
+        }
+        if (config.addMsg !== undefined) {
+            this.addMsg = config.addMsg;
+            console.log(`[BotManager] 💬 Add message mis à jour`);
+        }
+    }
+
+    async executeAction(targetName: string, action: string, data: any): Promise<string> {
         console.log(`[BotManager] Executing ${action} on ${targetName}`);
 
         const botInstance = this.getActiveBots().find(b => b.account.pseudo === targetName);
 
         if (!botInstance || !botInstance.isConnected) {
             console.error(`[BotManager] Bot ${targetName} not found or offline.`);
-            return;
+            return `❌ Bot ${targetName} introuvable ou hors ligne.`;
         }
 
         const client = botInstance.client;
         let result = '';
 
         try {
-            // REFACTORED: Use shared Actions classes
             switch (action) {
+                // Party
                 case 'leave':
                     result = await this.partyActions.leaveParty(client);
                     break;
@@ -355,13 +483,50 @@ export class BotManager {
                 case 'privacy':
                     result = await this.partyActions.setPrivacy(client, data);
                     break;
+                case 'ready':
+                    result = await this.partyActions.setReady(client, true);
+                    break;
+                case 'unready':
+                    result = await this.partyActions.setReady(client, false);
+                    break;
+                // Social
                 case 'add':
                     result = await this.socialActions.addFriend(client, data);
                     break;
+                // Cosmetics
+                case 'skin':
+                    if (!data) { result = '❌ Usage: skin <nom>'; break; }
+                    result = await this.cosmeticsActions.setSkin(client, data);
+                    break;
+                case 'backpack':
+                    if (!data) { result = '❌ Usage: backpack <nom>'; break; }
+                    result = await this.cosmeticsActions.setBackpack(client, data);
+                    break;
+                case 'pickaxe':
+                    if (!data) { result = '❌ Usage: pickaxe <nom>'; break; }
+                    result = await this.cosmeticsActions.setPickaxe(client, data);
+                    break;
+                case 'emote':
+                    if (!data) { result = '❌ Usage: emote <nom>'; break; }
+                    result = await this.cosmeticsActions.setEmote(client, data);
+                    break;
+                case 'stopdanse':
+                    result = await this.cosmeticsActions.clearEmote(client);
+                    break;
+                case 'level':
+                    const lvl = parseInt(data);
+                    if (isNaN(lvl) || lvl < 1) { result = '❌ Usage: level <nombre>'; break; }
+                    result = await this.cosmeticsActions.setLevel(client, lvl);
+                    break;
+                default:
+                    result = `❌ Action inconnue: ${action}`;
             }
             console.log(`[${targetName}] ${result}`);
         } catch (e: any) {
-            console.error(`[${targetName}] ❌ Action ${action} failed:`, e.message);
+            result = `❌ Erreur action ${action}: ${e.message}`;
+            console.error(`[${targetName}] ${result}`);
         }
+
+        return result;
     }
 }

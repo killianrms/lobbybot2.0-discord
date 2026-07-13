@@ -16,19 +16,19 @@ export const ShopCommand: Command = {
                 .setColor('#D400FF') // Epic Purple
                 .setThumbnail('https://upload.wikimedia.org/wikipedia/commons/7/7c/Fortnite_F_lettermark_logo.png');
 
-            // Group by section if possible?
-            // The API response structure flat list usually has 'section' in item attributes
-            // But here we might just list top items.
+            // Depuis la migration vers /v2/shop, les items sont dans brItems (pas items)
+            // et la section vient de layout.name (pas section.name).
+            const daily = shop.filter((i: any) => i.layout?.name === 'Daily' || i.layout?.name === 'Quotidien').slice(0, 5);
+            const others = shop.filter((i: any) => i.layout?.name !== 'Daily' && i.layout?.name !== 'Quotidien').slice(0, 10);
 
-            const daily = shop.filter((i: any) => i.section?.name === 'Daily' || i.section?.name === 'Quotidien').slice(0, 5);
-            const others = shop.filter((i: any) => i.section?.name !== 'Daily' && i.section?.name !== 'Quotidien').slice(0, 10);
+            const itemName = (i: any) => i.brItems?.[0]?.name ?? i.tracks?.[0]?.title ?? 'Item inconnu';
 
             if (daily.length > 0) {
-                const dailyList = daily.map((i: any) => `• **${i.items[0]?.name}** (${i.finalPrice} V)`).join('\n');
+                const dailyList = daily.map((i: any) => `• **${itemName(i)}** (${i.finalPrice} V)`).join('\n');
                 embed.addFields({ name: '📅 Daily', value: dailyList, inline: true });
             }
 
-            const featuredList = others.map((i: any) => `• **${i.items[0]?.name}** (${i.finalPrice} V)`).join('\n');
+            const featuredList = others.map((i: any) => `• **${itemName(i)}** (${i.finalPrice} V)`).join('\n');
             embed.addFields({ name: '✨ Featured (Extraits)', value: featuredList || 'Aucun', inline: true });
 
             await interaction.editReply({ embeds: [embed] });

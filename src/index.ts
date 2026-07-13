@@ -6,6 +6,19 @@ import { DiscordManager } from './managers/DiscordManager';
 import { SocketManager } from './managers/SocketManager';
 import { UserManager } from './managers/UserManager';
 import { APIManager } from './managers/APIManager';
+import { sendAlert } from './utils/AlertManager';
+
+// Filet de sécurité : capture tout ce qui n'est pas géré ailleurs (DB, Discord, Fortnite...)
+// et prévient sur le webhook au lieu de laisser le process planter en silence.
+process.on('uncaughtException', (err) => {
+    console.error('[FATAL] Uncaught Exception:', err);
+    sendAlert('uncaught-exception', '🔴 Exception non gérée', `\`\`\`${err.stack || err.message}\`\`\``, 'critical');
+});
+
+process.on('unhandledRejection', (reason: any) => {
+    console.error('[FATAL] Unhandled Rejection:', reason);
+    sendAlert('unhandled-rejection', '🔴 Promise rejetée non gérée', `\`\`\`${reason?.stack || String(reason)}\`\`\``, 'critical');
+});
 
 async function main() {
     console.log('╔════════════════════════════════════════╗');
@@ -40,8 +53,12 @@ async function main() {
 
     // Check DB every 5min for new bots added externally
     botManager.startDBSync();
+    botManager.startHealthCheck();
 
     await discordManager.start(process.env.DISCORD_TOKEN || '');
 }
 
-main().catch(console.error);
+main().catch((err) => {
+    console.error(err);
+    sendAlert('main-crash', '🔴 Crash au démarrage du bot', `\`\`\`${err.stack || err.message}\`\`\``, 'critical');
+});

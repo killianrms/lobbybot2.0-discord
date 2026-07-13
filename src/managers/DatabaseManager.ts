@@ -161,6 +161,20 @@ export class DatabaseManager {
         };
     }
 
+    public async getAllUsers(): Promise<any[]> {
+        const rows = this.db.prepare('SELECT * FROM users WHERE secret IS NOT NULL').all() as any[];
+        return rows.map(row => ({
+            discordId: row.discord_id,
+            pseudo: row.epic_pseudo,
+            language: row.language || 'en',
+            deviceAuth: {
+                deviceId: row.device_id,
+                accountId: row.account_id,
+                secret: row.secret
+            }
+        }));
+    }
+
     public async deleteUser(discordId: string): Promise<void> {
         this.db.prepare('DELETE FROM users WHERE discord_id = ?').run(discordId);
     }

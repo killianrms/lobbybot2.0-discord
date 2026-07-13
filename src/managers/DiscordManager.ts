@@ -4,12 +4,15 @@ import { UserManager } from './UserManager';
 import { APIManager } from './APIManager';
 import { getTranslation } from '../utils/locales';
 import { CommandList } from '../commands';
+import { sendAlert } from '../utils/AlertManager';
 
 export class DiscordManager {
     private client: Client;
     private botManager: BotManager;
     private userManager: UserManager;
     private apiManager: APIManager;
+    private cooldowns: Map<string, number> = new Map();
+    private readonly COOLDOWN_MS = 3000; // 3 secondes entre commandes
 
     constructor(botManager: BotManager, userManager: UserManager, apiManager: APIManager) {
         this.botManager = botManager;
@@ -38,11 +41,23 @@ export class DiscordManager {
         try {
             return await Promise.race([
                 this.userManager.getLanguage(userId),
-                new Promise<string>((resolve) => setTimeout(() => resolve('en'), 1500))
+                new Promise<string>((resolve) => setTimeout(() => resolve('en'), 3000))
             ]);
         } catch {
             return 'en';
         }
+    }
+
+    private checkCooldown(userId: string): boolean {
+        const now = Date.now();
+        const lastUsed = this.cooldowns.get(userId);
+
+        if (lastUsed && now - lastUsed < this.COOLDOWN_MS) {
+            return false; // En cooldown
+        }
+
+        this.cooldowns.set(userId, now);
+        return true; // Peut utiliser
     }
 
     private setupEvents(): void {
@@ -50,6 +65,12 @@ export class DiscordManager {
         // Prevent unhandled error events from crashing the process
         this.client.on('error', (error) => {
             console.error('[Discord] Client error:', error.message);
+            sendAlert('discord-client-error', '🔴 Erreur du client Discord', `\`\`\`${error.message}\`\`\``, 'critical');
+        });
+
+        this.client.on('shardDisconnect', (event, shardId) => {
+            console.error(`[Discord] Shard ${shardId} déconnecté:`, event.code, event.reason);
+            sendAlert('discord-shard-disconnect', '🔴 Bot Discord déconnecté', `Shard ${shardId} déconnecté (code ${event.code}).`, 'critical');
         });
 
         // SLASH COMMAND REGISTRATION ON READY
@@ -60,14 +81,31 @@ export class DiscordManager {
 
             try {
                 if (this.client.user) {
-                    await rest.put(
-                        Routes.applicationCommands(this.client.user.id),
-                        { body: commands },
-                    );
-                    console.log('✅ Slash Commands registered!');
+                    // Enregistrement par guild = quasi instantané (vs jusqu'à 1h pour le global).
+                    // GUILD_ID en .env force une guild précise ; sinon, si le bot n'est que sur
+                    // un seul serveur, on l'utilise automatiquement. Fallback sur le global sinon.
+                    const guildId = process.env.GUILD_ID || (this.client.guilds.cache.size === 1 ? this.client.guilds.cache.first()!.id : null);
+
+                    if (guildId) {
+                        await rest.put(
+                            Routes.applicationGuildCommands(this.client.user.id, guildId),
+                            { body: commands },
+                        );
+                        // Vide les commandes globales pour éviter les doublons si on en avait
+                        // enregistré avant de passer en mode guild.
+                        await rest.put(Routes.applicationCommands(this.client.user.id), { body: [] });
+                        console.log(`✅ Slash Commands registered (guild ${guildId}, instantané)!`);
+                    } else {
+                        await rest.put(
+                            Routes.applicationCommands(this.client.user.id),
+                            { body: commands },
+                        );
+                        console.log('✅ Slash Commands registered (global, jusqu\'à 1h de propagation)!');
+                    }
                 }
-            } catch (error) {
+            } catch (error: any) {
                 console.error('❌ Failed to register slash commands:', error);
+                sendAlert('slash-commands-registration', '🔴 Échec d\'enregistrement des commandes Discord', `\`\`\`${error.message}\`\`\``, 'critical');
             }
         });
 
@@ -134,6 +172,19 @@ export class DiscordManager {
             const command = CommandList.find(c => c.data.name === interaction.commandName);
             if (!command) return;
 
+            // Rate limiting (sauf pour /ping et /help)
+            if (!['ping', 'help'].includes(interaction.commandName)) {
+                if (!this.checkCooldown(interaction.user.id)) {
+                    try {
+                        await interaction.reply({
+                            content: '⏱️ Ralentis ! Attends 3 secondes entre chaque commande.\n⏱️ Slow down! Wait 3 seconds between commands.',
+                            flags: 64
+                        });
+                    } catch {}
+                    return;
+                }
+            }
+
             // Fetch language with a timeout to preserve the 3s deferReply window
             const userLang = await this.getUserLang(interaction.user.id);
 
@@ -146,7 +197,9 @@ export class DiscordManager {
             } catch (error) {
                 console.error('[Discord] Command error:', error);
                 try {
-                    const errMsg = 'Une erreur est survenue lors de l\'exécution de cette commande.';
+                    const errMsg = userLang === 'fr'
+                        ? '❌ Une erreur est survenue lors de l\'exécution de cette commande.'
+                        : '❌ An error occurred while executing this command.';
                     if (interaction.replied || interaction.deferred) {
                         await interaction.followUp({ content: errMsg, flags: 64 });
                     } else {

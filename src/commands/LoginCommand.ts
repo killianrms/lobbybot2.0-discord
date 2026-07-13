@@ -9,7 +9,8 @@ import {
 import { Command, CommandContext } from './Command';
 import { getTranslation } from '../utils/locales';
 
-// Page qui affiche directement le code d'autorisation (Epic redirige vers login si besoin)
+// Page qui affiche directement le code d'autorisation (Epic redirige vers login si besoin).
+// Sert de secours si le device code flow échoue sur tous les clients.
 const EPIC_CODE_URL  = 'https://www.epicgames.com/id/api/redirect?clientId=3f69e56c7649492c8cc29f1af08a8a12&responseType=code';
 const EPIC_LOGIN_URL = 'https://www.epicgames.com/id/login';
 
@@ -23,7 +24,7 @@ export const LoginCommand: Command = {
 
         const t = (key: string) => getTranslation(userLang, key);
 
-        // ── Tenter le device code flow ────────────────────────────────────────
+        // ── Tenter le device code flow (1 clic) ───────────────────────────────
         const flow = await context.userManager.initiateDeviceFlow();
 
         if (flow) {

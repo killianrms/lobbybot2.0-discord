@@ -17,8 +17,8 @@ export const InfoCommand: Command = {
         let maxFriends = totalBots * 1000; // Approx
 
         bots.forEach(b => {
-            if (b.client && b.client.friends) {
-                totalFriends += b.client.friends.size;
+            if (b.client && b.client.friend?.list) {
+                totalFriends += b.client.friend.list.size;
             }
         });
 

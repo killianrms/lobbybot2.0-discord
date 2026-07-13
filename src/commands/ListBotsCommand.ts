@@ -30,7 +30,7 @@ export const ListBotsCommand: Command = {
             return new EmbedBuilder()
                 .setTitle(`${getTranslation(userLang, 'BOTS_CONNECTED')} (${bots.length})`)
                 .setColor('#0099ff')
-                .setDescription(pageItems.map(b => `• **${b.account.pseudo}** (${b.client?.friends?.size || 0} amis)`).join('\n'))
+                .setDescription(pageItems.map(b => `• **${b.account.pseudo}** (${b.client?.friend?.list?.size || 0} amis)`).join('\n'))
                 .setFooter({ text: `${getTranslation(userLang, 'PAGE')} ${page + 1}/${totalPages}` });
         };
 

@@ -6,13 +6,11 @@ const EPIC_TOKEN_URL       = 'https://account-public-service-prod.ol.epicgames.c
 const EPIC_DEVICE_CODE_URL = 'https://account-public-service-prod.ol.epicgames.com/account/api/oauth/deviceAuthorization';
 const EPIC_EXCHANGE_URL    = 'https://account-public-service-prod.ol.epicgames.com/account/api/oauth/exchange';
 
-// Clients à essayer dans l'ordre pour le device code flow (credentials complets depuis fnbr)
+// Clients à essayer dans l'ordre pour le device code flow (credentials publics fnbr)
 const DEVICE_FLOW_CLIENTS = [
     { id: '98f7e42c2e3a4f86a74eb43fbb41ed39', secret: '0a2449a2-001a-451e-afec-3e812901c4d7' }, // fortniteNewSwitchGameClient
-    { id: '3446cd72694c4a4485d81b77adbb2141', secret: '9209d4a5e25a457fb9b07489d313b41a' }, // fortniteIOSGameClient
     { id: '3f69e56c7649492c8cc29f1af08a8a12', secret: 'b51ee9cb12234f50a69efa67ef53812e' }, // fortniteAndroidGameClient
-    { id: '34a02cf8f4414e29b15921876da36f9a', secret: 'daafbccc737745039dffe53d94fc76cf' }, // launcherAppClient2
-    { id: 'ec684b8c687f479fadea3cb2ad83f5c6', secret: 'e1f31c211f28413186262d37a13fc84d' }, // fortnitePCGameClient
+    { id: '3446cd72694c4a4485d81b77adbb2141', secret: '9209d4a5e25a457fb9b07489d313b41a' }, // fortniteIOSGameClient
 ];
 
 export interface DeviceFlowInfo {
@@ -32,23 +30,43 @@ export class UserManager {
         this.db = db;
     }
 
-    // ─── DEVICE CODE FLOW ──────────────────────────────────────────────────────
+    // ─── DEVICE CODE FLOW ───────────────────────────────────────────────────────
 
     /**
      * Étape 1 : demande un code à Epic et retourne les infos à montrer à l'utilisateur.
-     * Retourne null si Epic refuse (on bascule vers le flow manuel).
+     *
+     * IMPORTANT : l'endpoint /oauth/deviceAuthorization exige un Bearer token obtenu
+     * via un grant client_credentials préalable — l'appeler directement en Basic auth
+     * (comme le grant_type=device_code du polling) renvoie 401 authentication_failed.
+     *
+     * Retourne null si Epic refuse sur tous les clients (on bascule vers le flow manuel).
      */
     public async initiateDeviceFlow(): Promise<DeviceFlowInfo | null> {
         for (const client of DEVICE_FLOW_CLIENTS) {
             try {
                 const basicAuth = Buffer.from(`${client.id}:${client.secret}`).toString('base64');
 
-                const resp = await axios.post(
-                    EPIC_DEVICE_CODE_URL,
-                    'scope=basic_profile+friends_list+openid+presence',
+                // Étape 1a : token anonyme (client_credentials)
+                const tokenResp = await axios.post(
+                    EPIC_TOKEN_URL,
+                    'grant_type=client_credentials',
                     {
                         headers: {
                             'Authorization': `Basic ${basicAuth}`,
+                            'Content-Type': 'application/x-www-form-urlencoded',
+                        },
+                        timeout: 10_000,
+                    }
+                );
+                const bearer = tokenResp.data.access_token;
+
+                // Étape 1b : demande du device code avec le Bearer token
+                const resp = await axios.post(
+                    EPIC_DEVICE_CODE_URL,
+                    'grant_type=urn:ietf:params:oauth:grant-type:device_code&scope=basic_profile+friends_list+openid+presence',
+                    {
+                        headers: {
+                            'Authorization': `Bearer ${bearer}`,
                             'Content-Type': 'application/x-www-form-urlencoded',
                         },
                         timeout: 10_000,
@@ -62,13 +80,12 @@ export class UserManager {
                     clientSecret: client.secret,
                     userCode:     d.user_code,
                     deviceCode:   d.device_code,
-                    // URL format avec client_id visible (comme confirmé fonctionnel)
-                    activationUrl: `https://www.epicgames.com/id/login?user_code=${d.user_code}&client_id=${client.id}`,
+                    activationUrl: d.verification_uri_complete || `https://www.epicgames.com/activate?userCode=${d.user_code}`,
                     expiresIn:    d.expires_in ?? 600,
                     interval:     d.interval   ?? 5,
                 };
             } catch (e: any) {
-                console.log(`[UserManager] Device flow 401 avec client ${client.id}`);
+                console.log(`[UserManager] Device flow échec avec client ${client.id}:`, e.response?.data?.errorCode ?? e.message);
             }
         }
 
@@ -88,7 +105,6 @@ export class UserManager {
         const basicAuth = Buffer.from(`${clientId}:${clientSecret}`).toString('base64');
 
         try {
-            // Récupère le token via device_code
             const tokenResp = await axios.post(
                 EPIC_TOKEN_URL,
                 `grant_type=device_code&device_code=${encodeURIComponent(deviceCode)}`,
@@ -101,15 +117,8 @@ export class UserManager {
                 }
             );
 
-            const accessToken = tokenResp.data.access_token;
-
-            // Récupère un exchange code pour passer à fnbr
-            const exchResp = await axios.get(EPIC_EXCHANGE_URL, {
-                headers: { 'Authorization': `Bearer ${accessToken}` },
-                timeout: 10_000,
-            });
-
-            return await this._loginWithExchangeCode(discordId, exchResp.data.code);
+            const exchangeCode = await this._createExchangeCodeFromAccessToken(tokenResp.data.access_token);
+            return await this._loginWithExchangeCode(discordId, exchangeCode);
 
         } catch (e: any) {
             const errCode = e.response?.data?.errorCode ?? '';
@@ -123,7 +132,7 @@ export class UserManager {
         }
     }
 
-    // ─── AUTHORIZATION CODE FLOW (fallback) ───────────────────────────────────
+    // ─── AUTHORIZATION CODE FLOW ────────────────────────────────────────────────
 
     /**
      * Login via le code d'autorisation Epic (méthode manuelle).
@@ -170,6 +179,14 @@ export class UserManager {
     }
 
     // ─── HELPERS ──────────────────────────────────────────────────────────────
+
+    private async _createExchangeCodeFromAccessToken(accessToken: string): Promise<string> {
+        const resp = await axios.get(EPIC_EXCHANGE_URL, {
+            headers: { 'Authorization': `Bearer ${accessToken}` },
+            timeout: 10_000,
+        });
+        return resp.data.code;
+    }
 
     private async _loginWithExchangeCode(discordId: string, exchangeCode: string): Promise<string> {
         const tempClient = new Client({
@@ -231,8 +248,7 @@ export class UserManager {
             await userClient.login();
 
             const friends: string[] = [];
-            const col = (userClient as any).friends;
-            if (col) col.forEach((f: any) => friends.push(f.displayName));
+            userClient.friend.list.forEach((f: any) => friends.push(f.displayName));
 
             await userClient.logout();
             return friends;
@@ -250,13 +266,14 @@ export class UserManager {
             const userClient = new Client({ auth: { deviceAuth: user.deviceAuth } });
             await userClient.login();
 
-            await (userClient as any).http.sendPost(
-                'https://fortnite-public-service-prod11.ol.epicgames.com/fortnite/api/game/v2/profile/'
-                + userClient.user?.self?.id
-                + '/client/SetAffiliateName?profileId=common_core',
-                '',
-                { affiliateName: code }
-            );
+            // fnbr.js n'expose pas de méthode SetAffiliateName ni http.sendPost() — on appelle
+            // directement le endpoint MCP via epicgamesRequest(), comme le fait FriendManager.add() en interne.
+            await (userClient as any).http.epicgamesRequest({
+                method: 'POST',
+                url: `https://fortnite-public-service-prod11.ol.epicgames.com/fortnite/api/game/v2/profile/${userClient.user?.self?.id}/client/SetAffiliateName?profileId=common_core`,
+                headers: { 'Content-Type': 'application/json' },
+                data: { affiliateName: code },
+            }, 'fortnite');
 
             await userClient.logout();
             return 'SUCCESS';
@@ -267,6 +284,26 @@ export class UserManager {
         }
     }
 
+    /**
+     * Applique le code créateur au compte Epic de chaque utilisateur connecté via /login (pas aux bots).
+     */
+    public async setAffiliateForAllUsers(code: string): Promise<{ success: string[]; failed: { discordId: string; reason: string }[] }> {
+        const users = await this.db.getAllUsers();
+        const success: string[] = [];
+        const failed: { discordId: string; reason: string }[] = [];
+
+        for (const user of users) {
+            const result = await this.setAffiliate(user.discordId, code);
+            if (result === 'SUCCESS') {
+                success.push(user.pseudo || user.discordId);
+            } else {
+                failed.push({ discordId: user.pseudo || user.discordId, reason: result === 'INVALID_CODE' ? 'Code invalide' : result });
+            }
+        }
+
+        return { success, failed };
+    }
+
     public async getLocker(discordId: string): Promise<any | null> {
         const user = await this.db.getUser(discordId);
         if (!user) return null;
@@ -275,18 +312,26 @@ export class UserManager {
             const userClient = new Client({ auth: { deviceAuth: user.deviceAuth } });
             await userClient.login();
 
-            const items = (userClient as any).inventory?.items;
+            // fnbr.js n'a pas de gestionnaire d'inventaire BR — on interroge directement
+            // le profil MCP "athena" (comme le fait FriendManager.add() en interne pour les amis).
+            const profileResp = await (userClient as any).http.epicgamesRequest({
+                method: 'POST',
+                url: `https://fortnite-public-service-prod11.ol.epicgames.com/fortnite/api/game/v2/profile/${userClient.user?.self?.id}/client/QueryProfile?profileId=athena`,
+                headers: { 'Content-Type': 'application/json' },
+                data: {},
+            }, 'fortnite');
+
+            const items = profileResp?.profileChanges?.[0]?.profile?.items ?? {};
             const locker = { skins: 0, backpacks: 0, pickaxes: 0, emotes: 0, legendary: 0 };
 
-            if (items) {
-                for (const [, item] of items) {
-                    const type = (item as any).templateId?.split(':')[0];
-                    if (type === 'AthenaCharacter') locker.skins++;
-                    if (type === 'AthenaBackpack')  locker.backpacks++;
-                    if (type === 'AthenaPickaxe')   locker.pickaxes++;
-                    if (type === 'AthenaDance')      locker.emotes++;
-                    if ((item as any).rarity === 'Legendary') locker.legendary++;
-                }
+            for (const key of Object.keys(items)) {
+                const item = items[key];
+                const type = item?.templateId?.split(':')[0];
+                if (type === 'AthenaCharacter') locker.skins++;
+                if (type === 'AthenaBackpack')  locker.backpacks++;
+                if (type === 'AthenaPickaxe')   locker.pickaxes++;
+                if (type === 'AthenaDance')     locker.emotes++;
+                if (item?.attributes?.rarity === 'legendary' || item?.attributes?.rarity === 'Legendary') locker.legendary++;
             }
 
             await userClient.logout();

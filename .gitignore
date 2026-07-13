@@ -11,9 +11,10 @@ yarn-error.log*
 .vscode/*
 
 # Fichiers de configuration sensibles
+.env
 accounts.csv
 info.json
 dist/
 bot/
 .claude/
-sauv.csv.env
+sauv.csv

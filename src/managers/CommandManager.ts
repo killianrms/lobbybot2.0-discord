@@ -87,13 +87,14 @@ export class CommandManager {
                 }
 
                 case 'hide': {
-                    // Cache tout le monde sauf le bot et l'auteur ; "!hide all" cache aussi l'auteur
-                    const keepIds = query.toLowerCase() === 'all' ? [] : [message.author.id];
+                    // Par défaut : cacher TOUT le monde sauf le bot (screens skins rares 😏)
+                    // "!hide me" garde aussi l'auteur visible
+                    const keepAuthor = query.toLowerCase() === 'me';
                     try {
-                        await ModernParty.setHidden(client, true, keepIds);
-                        response = query.toLowerCase() === 'all'
-                            ? '🙈 Tous les membres sont cachés.'
-                            : '🙈 Membres cachés (sauf toi). !show pour rétablir.';
+                        await ModernParty.setHidden(client, true, keepAuthor ? [message.author.id] : []);
+                        response = keepAuthor
+                            ? '🙈 Tout le monde est caché sauf le bot et toi. !show pour rétablir.'
+                            : '🙈 Tout le monde est caché, il ne reste que le bot ! !show pour rétablir.';
                     } catch (e: any) {
                         response = `❌ ${e.message}`;
                     }
@@ -155,7 +156,7 @@ export class CommandManager {
   !stopdanse - Arrêter la danse
   !level <n> - Changer le niveau
   !copy [pseudo] - Copier ton loadout (skin/sac/pioche)
-  !hide [all] / !show - Cacher/afficher les membres
+  !hide [me] / !show - Cacher tout le monde sauf le bot
 🎮 Lobby:
   !ready / !unready - Prêt / Pas prêt
   !leave - Quitter le groupe

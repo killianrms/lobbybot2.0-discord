@@ -51,6 +51,15 @@ export const AdminCommand: Command = {
                 .addStringOption(option => option.setName('pseudo').setDescription('Suffixe de pseudo par défaut').setRequired(false))
                 .addIntegerOption(option => option.setName('digits').setDescription('Nombre de chiffres aléatoires avant le pseudo').setRequired(false).setMinValue(0))
                 .addStringOption(option => option.setName('email').setDescription('Email Gmail (Dot Trick) à utiliser').setRequired(false))
+        )
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('premium')
+                .setDescription('Accorder ou retirer le premium à un utilisateur (test/manuel)')
+                .addUserOption(option => option.setName('user').setDescription('Membre Discord').setRequired(true))
+                .addStringOption(option => option.setName('action').setDescription('grant ou revoke').setRequired(true)
+                    .addChoices({ name: 'grant', value: 'grant' }, { name: 'revoke', value: 'revoke' }))
+                .addIntegerOption(option => option.setName('jours').setDescription('Durée en jours (grant seulement ; vide = illimité)').setRequired(false).setMinValue(1))
         ) as any,
 
     async execute(interaction: ChatInputCommandInteraction, context: CommandContext, userLang: string) {
@@ -224,6 +233,23 @@ export const AdminCommand: Command = {
             }
 
             await interaction.editReply(lines.join('\n'));
+        } else if (subcommand === 'premium') {
+            await interaction.deferReply({ ephemeral: true });
+
+            const target = interaction.options.getUser('user', true);
+            const action = interaction.options.getString('action', true);
+            if (action === 'revoke') {
+                context.dbManager.revokePremium(target.id);
+                await interaction.editReply(`✅ Premium retiré à ${target.tag}.`);
+                return;
+            }
+            const jours = interaction.options.getInteger('jours');
+            const expiresAt = jours ? new Date(Date.now() + jours * 86400_000).toISOString() : null;
+            context.dbManager.grantPremium(target.id, 'manual', expiresAt);
+            await interaction.editReply({
+                content: `✅ Premium accordé à ${target.tag}${jours ? ` pour ${jours} jour(s)` : ' (illimité)'}.`
+            });
+            return;
         }
     }
 };

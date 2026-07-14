@@ -60,6 +60,12 @@ export class DatabaseManager {
                 language TEXT DEFAULT 'en',
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
+            CREATE TABLE IF NOT EXISTS premium (
+                discord_id TEXT PRIMARY KEY,
+                source TEXT NOT NULL,
+                granted_at TEXT NOT NULL,
+                expires_at TEXT
+            );
         `);
         console.log('[Database] Tables ready');
 
@@ -169,6 +175,48 @@ export class DatabaseManager {
 
     public async setBotOwner(email: string, discordId: string): Promise<void> {
         this.db.prepare('UPDATE epic_accounts SET owner_discord_id = ? WHERE email = ?').run(discordId, email);
+    }
+
+    // --- PREMIUM ---
+
+    /** True si l'utilisateur a un premium actif (pas d'expiration, ou expiration future). */
+    public isPremium(discordId: string): boolean {
+        const row = this.db
+            .prepare('SELECT expires_at FROM premium WHERE discord_id = ?')
+            .get(discordId) as { expires_at: string | null } | undefined;
+        if (!row) return false;
+        if (row.expires_at && new Date(row.expires_at).getTime() < Date.now()) return false;
+        return true;
+    }
+
+    /** Accorde/renouvelle le premium. source: 'discord' | 'manual' | 'external'. */
+    public grantPremium(discordId: string, source: string, expiresAt: string | null = null): void {
+        this.db.prepare(`
+            INSERT INTO premium (discord_id, source, granted_at, expires_at)
+            VALUES (?, ?, ?, ?)
+            ON CONFLICT(discord_id) DO UPDATE SET
+                source = excluded.source,
+                granted_at = excluded.granted_at,
+                expires_at = excluded.expires_at
+        `).run(discordId, source, new Date().toISOString(), expiresAt);
+    }
+
+    public revokePremium(discordId: string): void {
+        this.db.prepare('DELETE FROM premium WHERE discord_id = ?').run(discordId);
+    }
+
+    /** Tous les bots appartenant à cet utilisateur (flotte perso). */
+    public getBotsByOwner(discordId: string): BotAccount[] {
+        const rows = this.db
+            .prepare('SELECT * FROM epic_accounts WHERE owner_discord_id = ?')
+            .all(discordId) as any[];
+        return rows.map(row => ({
+            email: row.email,
+            pseudo: row.pseudo,
+            password: '',
+            ownerDiscordId: row.owner_discord_id,
+            deviceAuth: { deviceId: row.device_id, accountId: row.account_id, secret: row.secret_id }
+        }));
     }
 
     // --- USER MANAGEMENT ---

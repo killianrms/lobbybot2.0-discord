@@ -1,5 +1,6 @@
 import { ChatInputCommandInteraction } from 'discord.js';
 import { DatabaseManager } from '../managers/DatabaseManager';
+import { PREMIUM_SKU_ID } from '../config/premium';
 
 /**
  * Renvoie true si l'utilisateur est premium. Sinon répond avec un message
@@ -8,6 +9,28 @@ import { DatabaseManager } from '../managers/DatabaseManager';
  */
 export function requirePremium(interaction: ChatInputCommandInteraction, dbManager: DatabaseManager): boolean {
     if (dbManager.isPremium(interaction.user.id)) return true;
+
+    // Fallback : le flag DB peut avoir dérivé si le bot était offline quand
+    // Discord a émis entitlementCreate. On vérifie les entitlements live de
+    // l'interaction et on réconcilie la DB si un abonnement actif existe.
+    if (PREMIUM_SKU_ID) {
+        const entitlements = (interaction as any).entitlements;
+        const active = entitlements?.find?.((e: any) => {
+            if (e.skuId !== PREMIUM_SKU_ID) return false;
+            const endsTimestamp = e.endsTimestamp as number | null | undefined;
+            return endsTimestamp == null || endsTimestamp > Date.now();
+        });
+        if (active) {
+            const endsTimestamp = (active as any).endsTimestamp as number | null | undefined;
+            dbManager.grantPremium(
+                interaction.user.id,
+                'discord',
+                endsTimestamp ? new Date(endsTimestamp).toISOString() : null
+            );
+            return true;
+        }
+    }
+
     interaction.reply({
         content: '🔒 Cette commande est réservée à **LobbyBot Premium**.\nAbonne-toi pour débloquer ta flotte perso, `/squad`, les emotes synchronisées et les presets !',
         ephemeral: true

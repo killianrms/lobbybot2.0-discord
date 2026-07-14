@@ -208,7 +208,10 @@ export class DatabaseManager {
             .prepare('SELECT expires_at FROM premium WHERE discord_id = ?')
             .get(discordId) as { expires_at: string | null } | undefined;
         if (!row) return false;
-        if (row.expires_at && new Date(row.expires_at).getTime() < Date.now()) return false;
+        if (row.expires_at) {
+            const t = Date.parse(row.expires_at);
+            if (!Number.isNaN(t) && t < Date.now()) return false;
+        }
         return true;
     }
 

@@ -40,6 +40,11 @@ export const SquadCommand: Command = {
             await new Promise(r => setTimeout(r, 600)); // espacement anti rate-limit
         }
 
+        const activePreset = context.dbManager.getActivePreset(interaction.user.id);
+        if (activePreset) {
+            await context.botManager.applyLoadoutToOwned(interaction.user.id, activePreset);
+        }
+
         await interaction.editReply(`🎬 Ta squad arrive (${online.length} bot(s)) :\n${results.join('\n')}\nAccepte les invitations dans Fortnite !`);
     }
 };

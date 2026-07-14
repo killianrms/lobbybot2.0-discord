@@ -1,4 +1,13 @@
 import Database from 'better-sqlite3';
+
+export interface LoadoutPreset {
+    name: string;
+    outfit?: string;
+    backpack?: string;
+    pickaxe?: string;
+    emote?: string;
+    isActive: boolean;
+}
 import * as path from 'path';
 import * as fs from 'fs';
 import { BotAccount } from '../types';
@@ -65,6 +74,20 @@ export class DatabaseManager {
                 source TEXT NOT NULL,
                 granted_at TEXT NOT NULL,
                 expires_at TEXT
+            );
+        `);
+
+        this.db.exec(`
+            CREATE TABLE IF NOT EXISTS loadout_presets (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                discord_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                outfit TEXT,
+                backpack TEXT,
+                pickaxe TEXT,
+                emote TEXT,
+                is_active INTEGER NOT NULL DEFAULT 0,
+                UNIQUE(discord_id, name)
             );
         `);
         console.log('[Database] Tables ready');
@@ -217,6 +240,48 @@ export class DatabaseManager {
             ownerDiscordId: row.owner_discord_id,
             deviceAuth: { deviceId: row.device_id, accountId: row.account_id, secret: row.secret_id }
         }));
+    }
+
+    // --- LOADOUT PRESETS ---
+
+    public savePreset(discordId: string, preset: Omit<LoadoutPreset, 'isActive'>): void {
+        this.db.prepare(`
+            INSERT INTO loadout_presets (discord_id, name, outfit, backpack, pickaxe, emote)
+            VALUES (@discord_id, @name, @outfit, @backpack, @pickaxe, @emote)
+            ON CONFLICT(discord_id, name) DO UPDATE SET
+                outfit = excluded.outfit, backpack = excluded.backpack,
+                pickaxe = excluded.pickaxe, emote = excluded.emote
+        `).run({
+            discord_id: discordId, name: preset.name,
+            outfit: preset.outfit ?? null, backpack: preset.backpack ?? null,
+            pickaxe: preset.pickaxe ?? null, emote: preset.emote ?? null
+        });
+    }
+
+    public listPresets(discordId: string): LoadoutPreset[] {
+        const rows = this.db.prepare('SELECT * FROM loadout_presets WHERE discord_id = ? ORDER BY name').all(discordId) as any[];
+        return rows.map(r => ({
+            name: r.name, outfit: r.outfit ?? undefined, backpack: r.backpack ?? undefined,
+            pickaxe: r.pickaxe ?? undefined, emote: r.emote ?? undefined, isActive: r.is_active === 1
+        }));
+    }
+
+    /** Marque un preset comme actif (un seul actif par user). Renvoie false si introuvable. */
+    public setActivePreset(discordId: string, name: string): boolean {
+        const exists = this.db.prepare('SELECT 1 FROM loadout_presets WHERE discord_id = ? AND name = ?').get(discordId, name);
+        if (!exists) return false;
+        this.db.prepare('UPDATE loadout_presets SET is_active = 0 WHERE discord_id = ?').run(discordId);
+        this.db.prepare('UPDATE loadout_presets SET is_active = 1 WHERE discord_id = ? AND name = ?').run(discordId, name);
+        return true;
+    }
+
+    public getActivePreset(discordId: string): LoadoutPreset | null {
+        const r = this.db.prepare('SELECT * FROM loadout_presets WHERE discord_id = ? AND is_active = 1').get(discordId) as any;
+        if (!r) return null;
+        return {
+            name: r.name, outfit: r.outfit ?? undefined, backpack: r.backpack ?? undefined,
+            pickaxe: r.pickaxe ?? undefined, emote: r.emote ?? undefined, isActive: true
+        };
     }
 
     // --- USER MANAGEMENT ---

@@ -584,6 +584,25 @@ export class BotManager {
         return count;
     }
 
+    /** Applique un preset de loadout à tous les bots perso connectés de l'utilisateur. */
+    async applyLoadoutToOwned(discordId: string, preset: import('./DatabaseManager').LoadoutPreset): Promise<number> {
+        const owned = this.dbManager.getBotsByOwner(discordId).map(b => b.pseudo);
+        const bots = this.getActiveBots().filter(b => b.isConnected && b.client && owned.includes(b.account.pseudo));
+        let count = 0;
+        for (const b of bots) {
+            try {
+                await ModernParty.setLoadout(b.client, {
+                    outfit: preset.outfit, backpack: preset.backpack, pickaxe: preset.pickaxe
+                });
+                if (preset.emote) await ModernParty.setEmote(b.client, preset.emote);
+                count++;
+            } catch (e: any) {
+                console.error(`[${b.account.pseudo}] preset échoué: ${e.message}`);
+            }
+        }
+        return count;
+    }
+
     async addFriendOnAvailableBot(targetUsername: string): Promise<'SUCCESS' | 'ERROR' | 'FULL' | 'ALREADY_FRIENDS'> {
         console.log(`[BotManager] Trying to add friend: ${targetUsername}`);
 

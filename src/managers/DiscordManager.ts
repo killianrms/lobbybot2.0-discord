@@ -8,6 +8,7 @@ import { sendAlert } from '../utils/AlertManager';
 import { DatabaseManager } from './DatabaseManager';
 import { GeneratorManager } from './GeneratorManager';
 import { BackupManager } from './BackupManager';
+import { PREMIUM_SKU_ID, PREMIUM_ROLE_ID } from '../config/premium';
 
 export class DiscordManager {
     private client: Client;
@@ -31,7 +32,8 @@ export class DiscordManager {
             intents: [
                 GatewayIntentBits.Guilds,
                 GatewayIntentBits.GuildMessages,
-                GatewayIntentBits.MessageContent
+                GatewayIntentBits.MessageContent,
+                GatewayIntentBits.GuildMembers
             ]
         });
     }
@@ -242,6 +244,53 @@ export class DiscordManager {
                     // Interaction expired, nothing we can do
                 }
             }
+        });
+
+        // PREMIUM ENTITLEMENT SYNC (Discord App Subscriptions)
+        const syncRole = async (userId: string, add: boolean) => {
+            if (!PREMIUM_ROLE_ID) return;
+            try {
+                for (const [, guild] of this.client.guilds.cache) {
+                    const member = await guild.members.fetch(userId).catch(() => null);
+                    if (!member) continue;
+                    if (add) await member.roles.add(PREMIUM_ROLE_ID);
+                    else await member.roles.remove(PREMIUM_ROLE_ID);
+                }
+            } catch (e: any) {
+                console.error(`[Premium] Sync rôle (${add ? 'add' : 'remove'}) échouée pour ${userId}: ${e.message}`);
+            }
+        };
+
+        const isOurSku = (ent: any) => !PREMIUM_SKU_ID || ent.skuId === PREMIUM_SKU_ID;
+
+        this.client.on('entitlementCreate', async (ent: any) => {
+            if (!ent.userId || !isOurSku(ent)) return;
+            const expiresAt = ent.endsTimestamp ? new Date(ent.endsTimestamp).toISOString() : null;
+            this.dbManager.grantPremium(ent.userId, 'discord', expiresAt);
+            await syncRole(ent.userId, true);
+            console.log(`[Premium] ✅ Entitlement créé pour ${ent.userId}`);
+        });
+
+        this.client.on('entitlementUpdate', async (_old: any, ent: any) => {
+            if (!ent.userId || !isOurSku(ent)) return;
+            const expiresAt = ent.endsTimestamp ? new Date(ent.endsTimestamp).toISOString() : null;
+            // endsTimestamp dans le passé = abonnement terminé/annulé
+            if (expiresAt && new Date(expiresAt).getTime() < Date.now()) {
+                this.dbManager.revokePremium(ent.userId);
+                await syncRole(ent.userId, false);
+                console.log(`[Premium] ⏹️ Entitlement expiré pour ${ent.userId}`);
+            } else {
+                this.dbManager.grantPremium(ent.userId, 'discord', expiresAt);
+                await syncRole(ent.userId, true);
+                console.log(`[Premium] 🔄 Entitlement renouvelé pour ${ent.userId}`);
+            }
+        });
+
+        this.client.on('entitlementDelete', async (ent: any) => {
+            if (!ent.userId || !isOurSku(ent)) return;
+            this.dbManager.revokePremium(ent.userId);
+            await syncRole(ent.userId, false);
+            console.log(`[Premium] 🗑️ Entitlement supprimé pour ${ent.userId}`);
         });
 
         // LEGACY MESSAGE HANDLER (Keeping it as backup)

@@ -568,6 +568,22 @@ export class BotManager {
         }
     }
 
+    /** Joue la même emote (par id de cosmétique) sur tous les bots perso connectés de l'utilisateur. */
+    async emoteAllOwned(discordId: string, emoteId: string): Promise<number> {
+        const owned = this.dbManager.getBotsByOwner(discordId).map(b => b.pseudo);
+        const bots = this.getActiveBots().filter(b => b.isConnected && b.client && owned.includes(b.account.pseudo));
+        let count = 0;
+        for (const b of bots) {
+            try {
+                await ModernParty.setEmote(b.client, emoteId);
+                count++;
+            } catch (e: any) {
+                console.error(`[${b.account.pseudo}] emote sync échouée: ${e.message}`);
+            }
+        }
+        return count;
+    }
+
     async addFriendOnAvailableBot(targetUsername: string): Promise<'SUCCESS' | 'ERROR' | 'FULL' | 'ALREADY_FRIENDS'> {
         console.log(`[BotManager] Trying to add friend: ${targetUsername}`);
 

@@ -20,6 +20,7 @@ interface QueueItem {
     pseudoSuffix?: string; // absent = utilise le suffixe persisté dans config.json
     count: number;
     resolve: (result: BatchResult) => void;
+    priority?: boolean;
 }
 
 /**
@@ -44,8 +45,8 @@ export class GeneratorManager {
     }
 
     /** Utilisé par /createbot : 1 bot, propriétaire = l'utilisateur qui demande. */
-    public async requestBot(discordId: string, pseudoSuffix: string): Promise<GenerationResult> {
-        const batch = await this.requestBots(discordId, pseudoSuffix, 1);
+    public async requestBot(discordId: string, pseudoSuffix: string, priority = false): Promise<GenerationResult> {
+        const batch = await this.requestBots(discordId, pseudoSuffix, 1, priority);
         if (batch.successes.length > 0) {
             return { status: 'success', email: batch.successes[0].email, pseudo: batch.successes[0].pseudo };
         }
@@ -53,9 +54,16 @@ export class GeneratorManager {
     }
 
     /** Utilisé par /admin createbot : N bots, pas de propriétaire (flotte), pas de limite. */
-    public requestBots(discordId: string | null, pseudoSuffix: string | undefined, count: number): Promise<BatchResult> {
+    public requestBots(discordId: string | null, pseudoSuffix: string | undefined, count: number, priority = false): Promise<BatchResult> {
         return new Promise((resolve) => {
-            this.queue.push({ discordId, pseudoSuffix, count, resolve });
+            const item: QueueItem = { discordId, pseudoSuffix, count, resolve, priority };
+            if (priority) {
+                const firstNonPriority = this.queue.findIndex(q => !q.priority);
+                if (firstNonPriority === -1) this.queue.push(item);
+                else this.queue.splice(firstNonPriority, 0, item);
+            } else {
+                this.queue.push(item);
+            }
             this.processNext();
         });
     }

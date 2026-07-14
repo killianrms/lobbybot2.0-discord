@@ -124,13 +124,19 @@ export class GeneratorManager {
             proc.stdout.on('data', (d) => { stdout += d.toString(); });
             proc.stderr.on('data', (d) => { stderr += d.toString(); });
 
-            // Sécurité : le script pilote un navigateur + résout des captchas, et attend 30s
-            // entre chaque compte d'un même batch. On laisse ~90s de budget par compte + une
-            // marge, plafonné à 1h pour ne pas bloquer la file indéfiniment sur un gros batch.
-            const timeoutMs = Math.min(60 * 60 * 1000, Math.max(5 * 60 * 1000, count * 90 * 1000));
+            // Sécurité : le script pilote un navigateur + résout des captchas (CapSolver peut
+            // prendre plusieurs minutes), vérifie l'email, et attend 30s entre chaque compte.
+            // Les 90s/compte d'origine étaient très en dessous de la réalité : un batch de 5
+            // se faisait tuer à 7,5 min alors qu'il lui faut plutôt 15-25 min. On passe à 5 min
+            // de budget par compte (réglable), plancher 10 min, plafond 2h.
+            const perAccountMs = parseInt(process.env.GENERATOR_TIMEOUT_PER_ACCOUNT_MS || '300000', 10);
+            const timeoutMs = Math.min(2 * 60 * 60 * 1000, Math.max(10 * 60 * 1000, count * perAccountMs));
             const timeout = setTimeout(() => {
                 proc.kill();
-                resolve({ successes: [], failed: count, reason: `Timeout (${Math.round(timeoutMs / 60000)} min) — le générateur n'a pas répondu` });
+                // Le générateur écrit les comptes en base au fil de l'eau : ceux déjà créés
+                // avant le kill ne sont pas perdus, ils seront repris au prochain démarrage.
+                console.error(`[GeneratorManager] ⏱️ Timeout après ${Math.round(timeoutMs / 60000)} min. Dernière sortie:\n${stdout.slice(-1500)}`);
+                resolve({ successes: [], failed: count, reason: `Timeout (${Math.round(timeoutMs / 60000)} min) — le générateur n'a pas répondu (les comptes déjà créés restent en base)` });
             }, timeoutMs);
 
             proc.on('close', (code) => {

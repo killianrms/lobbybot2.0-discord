@@ -534,6 +534,40 @@ export class BotManager {
         return availableBots[0];
     }
 
+    /**
+     * Renvoie les pseudos des bots connectés qui ont CET utilisateur (accountId Epic)
+     * dans leur liste d'amis. Sert à alimenter la liste déroulante de /skin et /invite :
+     * on ne propose que les bots que l'utilisateur peut réellement voir/rejoindre.
+     */
+    getBotsFriendedBy(accountId: string): string[] {
+        if (!accountId) return [];
+        return this.getActiveBots()
+            .filter(b => b.isConnected && b.client?.friend?.list)
+            .filter(b => b.client.friend.list.has(accountId))
+            .map(b => b.account.pseudo);
+    }
+
+    /**
+     * Fait inviter l'utilisateur (accountId Epic) dans le groupe du bot indiqué.
+     * Le bot doit être ami avec l'utilisateur (sinon Epic refuse l'invitation).
+     */
+    async inviteToParty(botPseudo: string, accountId: string): Promise<string> {
+        const botInstance = this.getActiveBots().find(b => b.account.pseudo === botPseudo);
+        if (!botInstance || !botInstance.isConnected || !botInstance.client) {
+            return `❌ Le bot **${botPseudo}** est introuvable ou hors ligne.`;
+        }
+        if (!botInstance.client.party) {
+            return `❌ Le bot **${botPseudo}** n'est pas dans un groupe pour le moment.`;
+        }
+        try {
+            await botInstance.client.party.invite(accountId);
+            return `✅ **${botPseudo}** t'a invité dans son groupe ! Accepte l'invitation dans Fortnite. 🎮`;
+        } catch (e: any) {
+            console.error(`[${botPseudo}] ❌ Invitation échouée pour ${accountId}: ${e.message}`);
+            return `❌ Échec de l'invitation : ${e.message}`;
+        }
+    }
+
     async addFriendOnAvailableBot(targetUsername: string): Promise<'SUCCESS' | 'ERROR' | 'FULL' | 'ALREADY_FRIENDS'> {
         console.log(`[BotManager] Trying to add friend: ${targetUsername}`);
 

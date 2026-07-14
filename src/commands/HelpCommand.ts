@@ -135,6 +135,16 @@ const PAGES = [
                 inline: false
             },
             {
+                name: '🧥 `/skin <bot> <nom>`',
+                value: 'Fait porter un skin à un de tes bots amis (liste déroulante).\n> Parfait pour tes screenshots de skins rares\n> Nécessite `/login` + `/add`',
+                inline: false
+            },
+            {
+                name: '🎉 `/invite [bot]`',
+                value: 'Un de tes bots amis t\'invite dans son groupe Fortnite.\n> Sans argument : le premier bot ami\n> Nécessite `/login` + `/add`',
+                inline: false
+            },
+            {
                 name: '➖ `/remove`',
                 value: 'Supprime le bot de ta liste d\'amis Epic Games.',
                 inline: false

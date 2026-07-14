@@ -16,6 +16,8 @@ import { LockerCommand } from './LockerCommand';
 import { SetLanguageCommand } from './SetLanguageCommand';
 import { HelpCommand } from './HelpCommand';
 import { PingCommand } from './PingCommand';
+import { SkinCommand } from './SkinCommand';
+import { InviteCommand } from './InviteCommand';
 import { CreateBotCommand } from './CreateBotCommand';
 
 const baseCommands: Command[] = [
@@ -36,6 +38,8 @@ const baseCommands: Command[] = [
     SetLanguageCommand,
     HelpCommand,
     PingCommand,
+    SkinCommand,
+    InviteCommand,
 ];
 
 // /createbot reste caché tant que fn_account_generator n'est pas fiable à 100%

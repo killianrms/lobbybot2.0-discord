@@ -172,6 +172,27 @@ export class DiscordManager {
                 return;
             }
 
+            // --- AUTOCOMPLETE (listes déroulantes dynamiques : /skin, /invite…) ---
+            if (interaction.isAutocomplete()) {
+                const command = CommandList.find(c => c.data.name === interaction.commandName);
+                if (command?.autocomplete) {
+                    try {
+                        await command.autocomplete(interaction, {
+                            botManager: this.botManager,
+                            userManager: this.userManager,
+                            apiManager: this.apiManager,
+                            dbManager: this.dbManager,
+                            generatorManager: this.generatorManager,
+                            backupManager: this.backupManager
+                        });
+                    } catch (e) {
+                        console.error('[Discord] Autocomplete error:', e);
+                        try { await interaction.respond([]); } catch {}
+                    }
+                }
+                return;
+            }
+
             // --- SLASH COMMANDS ---
             if (!interaction.isChatInputCommand()) return;
 

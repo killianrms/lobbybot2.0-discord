@@ -19,6 +19,7 @@ import { PingCommand } from './PingCommand';
 import { SkinCommand } from './SkinCommand';
 import { InviteCommand } from './InviteCommand';
 import { CreateBotCommand } from './CreateBotCommand';
+import { SquadCommand } from './SquadCommand';
 
 const baseCommands: Command[] = [
     LoginCommand,
@@ -40,6 +41,7 @@ const baseCommands: Command[] = [
     PingCommand,
     SkinCommand,
     InviteCommand,
+    SquadCommand,
 ];
 
 // /createbot reste caché tant que fn_account_generator n'est pas fiable à 100%

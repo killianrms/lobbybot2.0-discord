@@ -128,8 +128,13 @@ export class GeneratorManager {
             proc.on('close', (code) => {
                 clearTimeout(timeout);
 
-                const jsonStart = stdout.lastIndexOf('\n{\n');
-                const jsonText = jsonStart >= 0 ? stdout.slice(jsonStart + 1) : stdout;
+                // Le générateur imprime sa bannière ASCII avant le JSON final, et sous
+                // Windows les fins de ligne sont en \r\n : chercher un littéral "\n{\n"
+                // échouait donc systématiquement (→ "Sortie invalide" alors que le compte
+                // est bien créé). On repère la première ligne qui ouvre un objet JSON,
+                // comme le fait getStats() juste en dessous.
+                const jsonStart = stdout.search(/^\s*\{/m);
+                const jsonText = jsonStart >= 0 ? stdout.slice(jsonStart) : stdout;
 
                 try {
                     const parsed = JSON.parse(jsonText);

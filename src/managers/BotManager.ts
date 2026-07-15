@@ -461,6 +461,14 @@ export class BotManager {
      * Vérifie périodiquement le nombre de bots actifs. Alerte si on tombe sous le seuil
      * MIN_ACTIVE_BOTS_ALERT (déconnexion massive, credentials expirés en masse, etc.).
      */
+    /** Compteurs pour le statut du bot Discord : bots réellement connectés / bots lancés. */
+    public getFleetCounts(): { online: number; total: number } {
+        return {
+            online: this.getActiveBots().filter(b => b.isConnected).length,
+            total: this.bots.size,
+        };
+    }
+
     public startHealthCheck(intervalMs: number = 60_000): void {
         const minActive = parseInt(process.env.MIN_ACTIVE_BOTS_ALERT || '1', 10);
         console.log(`[BotManager] 🩺 Health check toutes les ${intervalMs / 1000}s (seuil: ${minActive} bot(s) actif(s) min)`);

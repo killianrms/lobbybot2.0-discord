@@ -1,4 +1,4 @@
-import { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, ModalBuilder, TextInputBuilder, TextInputStyle } from 'discord.js';
+import { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType, ModalBuilder, TextInputBuilder, TextInputStyle, ActivityType } from 'discord.js';
 import { BotManager } from './BotManager';
 import { UserManager } from './UserManager';
 import { APIManager } from './APIManager';
@@ -43,9 +43,33 @@ export class DiscordManager {
         try {
             await this.client.login(token);
             console.log(`🤖 Discord Bot Connected as ${this.client.user?.tag}`);
+            this.startPresenceUpdates();
         } catch (e) {
             console.error('❌ Failed to login to Discord:', e);
         }
+    }
+
+    /**
+     * Statut du bot Discord rafraîchi en continu : "🤖 X/Y bots en ligne".
+     * Un bot ne peut pas avoir de bouton cliquable dans sa présence (limitation
+     * Discord) — le lien du serveur vit dans le "À propos" du profil de l'app.
+     * On n'envoie la mise à jour que si le compteur change, pour ne pas spammer
+     * la gateway (limite ~5 presence updates / 20s).
+     */
+    private startPresenceUpdates(intervalMs: number = 30_000): void {
+        let last = '';
+        const update = () => {
+            const { online, total } = this.botManager.getFleetCounts();
+            const state = `🤖 ${online}/${total} bots en ligne`;
+            if (state === last) return;
+            last = state;
+            this.client.user?.setPresence({
+                status: online > 0 ? 'online' : 'idle',
+                activities: [{ type: ActivityType.Custom, name: 'lobbybot', state }],
+            });
+        };
+        update();
+        setInterval(update, intervalMs);
     }
 
     private async getUserLang(userId: string): Promise<string> {

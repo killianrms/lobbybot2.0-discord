@@ -1,4 +1,4 @@
-import { Client, SendMessageError } from 'fnbr';
+import { Client, Enums, SendMessageError } from 'fnbr';
 import { BotAccount, DeviceAuth } from '../types';
 import { DatabaseManager } from './DatabaseManager';
 import { CosmeticManager } from '../cosmetics/CosmeticManager';
@@ -22,6 +22,11 @@ export class BotManager {
     private eosPresenceTimers: Map<string, NodeJS.Timeout> = new Map();
     private adminManager: AdminManager;
     private commandManager: CommandManager;
+
+    // Lobby exclusif : dès qu'un joueur est avec le bot, la party passe en privé
+    // et les invitations sont refusées ; le bot redevient dispo quand il est seul.
+    // Désactivable via EXCLUSIVE_LOBBY=false.
+    private exclusiveLobby: boolean = process.env.EXCLUSIVE_LOBBY !== 'false';
 
     // Global config (managed from admin dashboard)
     public globalStatus: string = 'USE CODE CREATOR: aeroz';
@@ -223,11 +228,25 @@ export class BotManager {
                     console.error(`[${identifier}] ❌ Échec message de lobby: ${e.message}`);
                 }
             }
+            // Un joueur est là : verrouiller le lobby (privé)
+            await this.updateExclusivity(bot, identifier);
+        });
+
+        // Mode mimic (!copy) : rejouer en direct les changements de skin/style/danse
+        // du joueur copié. fnbr émet party:member:updated à chaque patch de meta.
+        (bot as any).on('party:member:updated', async (member: any) => {
+            if (member.id === bot.user?.self?.id) return;
+            try { await ModernParty.syncMimicFromMember(bot, member); } catch (e) {}
         });
 
         // Rappel du message de lobby quand quelqu'un part (utile en gros groupe)
         (bot as any).on('party:member:left', async (member: any) => {
             if (member.id === bot.user?.self?.id) return;
+            // Le joueur copié part : arrêter le mode mimic
+            if (ModernParty.getMimicTarget(bot) === member.id) {
+                ModernParty.clearMimic(bot);
+                console.log(`[${identifier}] 🎭 Mimic stoppé (départ de ${member.displayName})`);
+            }
             if (this.joinMsg) {
                 try {
                     await SecureChat.sendPartyMessage(bot, this.joinMsg);
@@ -236,6 +255,8 @@ export class BotManager {
                     console.error(`[${identifier}] ❌ Échec rappel lobby: ${e.message}`);
                 }
             }
+            // Plus personne avec le bot ? Rouvrir le lobby (public)
+            await this.updateExclusivity(bot, identifier);
         });
 
         // Commandes depuis le chat du LOBBY (messages encodés en base64)
@@ -301,6 +322,16 @@ export class BotManager {
         // donc le bot ne reçoit jamais aucune invitation.
         (bot as any).on('party:invite', async (invitation: any) => {
             console.log(`[${identifier}] 📨 Invitation de ${invitation.sender?.displayName}`);
+            // Bot déjà occupé avec un joueur : refuser et prévenir l'invitant,
+            // il ne faut pas abandonner le joueur en cours.
+            if (this.exclusiveLobby && this.countOtherMembers(bot) >= 1) {
+                try { await invitation.decline(); } catch (e) {}
+                try {
+                    await SecureChat.whisper(bot, invitation.sender?.id, '⏳ I\'m already in a lobby with another player! Try another bot or retry later.');
+                } catch (e) {}
+                console.log(`[${identifier}] 🚫 Invitation refusée (déjà occupé)`);
+                return;
+            }
             try {
                 await invitation.accept();
                 console.log(`[${identifier}] ✅ Invitation acceptée`);
@@ -324,6 +355,43 @@ export class BotManager {
      * (utile quand le bot REJOINT le lobby de quelqu'un : il ne verrait sinon que
      * les arrivées suivantes). Espacé légèrement pour ne pas déclencher le rate-limit.
      */
+    /** Nombre de membres de la party autres que le bot lui-même. */
+    private countOtherMembers(bot: Client): number {
+        const members: any[] = Array.from((bot as any).party?.members?.values?.() ?? []);
+        return members.filter(m => m.id !== bot.user?.self?.id).length;
+    }
+
+    /**
+     * Lobby exclusif : quand au moins un joueur est avec le bot ET que le bot est
+     * chef de SA party, on passe en privé (plus personne ne peut rejoindre) ;
+     * quand le bot se retrouve seul, on repasse en public. Le flag isPrivatized
+     * évite de re-patcher la privacy à chaque événement de party.
+     */
+    private async updateExclusivity(bot: Client, identifier: string): Promise<void> {
+        if (!this.exclusiveLobby) return;
+        const party: any = (bot as any).party;
+        if (!party?.me?.isLeader) return; // pas notre lobby → pas notre privacy
+
+        const instance = this.findInstanceByClient(bot);
+        const occupied = this.countOtherMembers(bot) >= 1;
+        if (instance && instance.isPrivatized === occupied) return;
+
+        try {
+            await party.setPrivacy(occupied ? Enums.PartyPrivacy.PRIVATE : Enums.PartyPrivacy.PUBLIC);
+            if (instance) instance.isPrivatized = occupied;
+            console.log(`[${identifier}] ${occupied ? '🔒 Lobby verrouillé (joueur présent)' : '🔓 Lobby rouvert (bot seul)'}`);
+        } catch (e: any) {
+            console.error(`[${identifier}] ❌ Privacy exclusivité: ${e.message}`);
+        }
+    }
+
+    private findInstanceByClient(bot: Client): any {
+        for (const instance of this.bots.values()) {
+            if (instance.client === bot) return instance;
+        }
+        return null;
+    }
+
     private async friendRequestExistingMembers(bot: Client, account: BotAccount, identifier: string): Promise<void> {
         const members: any[] = Array.from((bot as any).party?.members?.values?.() ?? []);
         for (const member of members) {
@@ -755,8 +823,31 @@ export class BotManager {
                     if (!data) { result = '❌ Usage: emote <nom>'; break; }
                     result = await this.cosmeticsActions.setEmote(client, data);
                     break;
+                case 'glider':
+                    if (!data) { result = '❌ Usage: glider <nom>'; break; }
+                    result = await this.cosmeticsActions.setGlider(client, data);
+                    break;
+                case 'shoes':
+                    if (!data) { result = '❌ Usage: shoes <nom>'; break; }
+                    result = await this.cosmeticsActions.setShoes(client, data);
+                    break;
+                case 'style':
+                    if (!data) { result = '❌ Usage: style <nom du style>'; break; }
+                    result = await this.cosmeticsActions.setStyle(client, data);
+                    break;
+                case 'random':
+                    result = await this.cosmeticsActions.setRandom(client, data || 'skin');
+                    break;
                 case 'stopdanse':
                     result = await this.cosmeticsActions.clearEmote(client);
+                    break;
+                case 'sitout':
+                    await ModernParty.setSittingOut(client, true);
+                    result = '🪑 Sit out activé.';
+                    break;
+                case 'sitin':
+                    await ModernParty.setSittingOut(client, false);
+                    result = '🎮 Sit out désactivé.';
                     break;
                 case 'level':
                     const lvl = parseInt(data);
@@ -783,10 +874,15 @@ export class BotManager {
                     if (!target) { result = `❌ Joueur "${data}" introuvable dans le lobby.`; break; }
                     try {
                         await ModernParty.copyLoadoutFrom(client, target);
-                        result = `🎭 Loadout copié sur ${target.displayName}.`;
+                        ModernParty.setMimicTarget(client, target.id);
+                        try { await ModernParty.copyEmoteFrom(client, target); } catch (e) {}
+                        result = `🎭 Copie de ${target.displayName} (skin + danses en direct).`;
                     } catch (e: any) { result = `❌ ${e.message}`; }
                     break;
                 }
+                case 'stopcopy':
+                    result = ModernParty.clearMimic(client) ? '⏹️ Copie stoppée.' : 'ℹ️ Aucune copie en cours.';
+                    break;
                 default:
                     result = `❌ Action inconnue: ${action}`;
             }

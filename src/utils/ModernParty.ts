@@ -40,18 +40,37 @@ function currentLoadout(me: any): any {
     return s && Object.keys(s).length ? s : JSON.parse(JSON.stringify(DEFAULT_MP_LOADOUT));
 }
 
+/** Variante au format du meta moderne : { c: channel, v: tag, dE: 0 }. */
+export interface LoadoutVariant { c: string; v: string; dE: number }
+
+export interface LoadoutItems {
+    outfit?: string;
+    backpack?: string;
+    pickaxe?: string;
+    glider?: string;
+    shoes?: string;
+}
+
+// slot loadout → clé compacte du MpLoadout (ac=skin, ab=sac, ap=pioche, ag=planeur, as=chaussures)
+const SLOT_KEYS: Record<keyof LoadoutItems, string> = {
+    outfit: 'ac', backpack: 'ab', pickaxe: 'ap', glider: 'ag', shoes: 'as',
+};
+
 export async function setLoadout(
     client: Client,
-    items: { outfit?: string; backpack?: string; pickaxe?: string },
+    items: LoadoutItems,
+    variants?: Partial<Record<keyof LoadoutItems, LoadoutVariant[]>>,
 ): Promise<void> {
     const me = getMe(client);
     const s = currentLoadout(me);
 
-    if (items.outfit !== undefined) s.ac = { i: items.outfit, v: [] };
-    if (items.pickaxe !== undefined) s.ap = { i: items.pickaxe, v: [] };
-    if (items.backpack !== undefined) {
-        if (items.backpack === '') delete s.ab;
-        else s.ab = { i: items.backpack, v: [] };
+    for (const slot of Object.keys(SLOT_KEYS) as (keyof LoadoutItems)[]) {
+        const value = items[slot];
+        if (value === undefined) continue;
+        const key = SLOT_KEYS[slot];
+        // '' = retirer l'item (seul le skin est obligatoire)
+        if (value === '' && slot !== 'outfit') delete s[key];
+        else s[key] = { i: value, v: variants?.[slot] || [] };
     }
 
     await me.sendPatch({
@@ -59,17 +78,63 @@ export async function setLoadout(
     });
 }
 
-export async function setReady(client: Client, ready: boolean): Promise<void> {
+/** Loadout courant du bot (lecture seule) — clés compactes ac/ab/ap/ag/as. */
+export function getLoadout(client: Client): any {
+    return currentLoadout(getMe(client));
+}
+
+/** Applique des variantes (styles) à un slot déjà équipé, sans changer l'item. */
+export async function setVariants(
+    client: Client,
+    slot: keyof LoadoutItems,
+    variants: LoadoutVariant[],
+): Promise<string> {
+    const me = getMe(client);
+    const s = currentLoadout(me);
+    const key = SLOT_KEYS[slot];
+    if (!s[key]?.i) throw new Error(`Aucun item équipé sur ce slot (${slot})`);
+
+    s[key].v = variants;
+    await me.sendPatch({
+        'Default:MpLoadout1_j': me.meta.set('Default:MpLoadout1_j', { MpLoadout1: { s } }),
+    });
+    return s[key].i;
+}
+
+/**
+ * Bannière du lobby : li = icône (ex: StandardBanner15), lc = couleur
+ * (ex: DefaultColor12). Visible sur la carte de membre.
+ */
+export async function setBanner(client: Client, icon?: string, color?: string): Promise<void> {
+    const me = getMe(client);
+    const s = currentLoadout(me);
+    if (icon) s.li = { i: icon, v: [] };
+    if (color) s.lc = { i: color, v: [] };
+    await me.sendPatch({
+        'Default:MpLoadout1_j': me.meta.set('Default:MpLoadout1_j', { MpLoadout1: { s } }),
+    });
+}
+
+async function setReadyStatus(client: Client, status: 'Ready' | 'NotReady' | 'SittingOut'): Promise<void> {
     const me = getMe(client);
     const prop = me.meta.get('Default:MatchmakingInfo_j');
     const info = prop?.MatchmakingInfo && Object.keys(prop.MatchmakingInfo).length
         ? prop.MatchmakingInfo
         : {};
-    info.readyStatus = ready ? 'Ready' : 'NotReady';
+    info.readyStatus = status;
 
     await me.sendPatch({
         'Default:MatchmakingInfo_j': me.meta.set('Default:MatchmakingInfo_j', { MatchmakingInfo: info }),
     });
+}
+
+export async function setReady(client: Client, ready: boolean): Promise<void> {
+    return setReadyStatus(client, ready ? 'Ready' : 'NotReady');
+}
+
+/** « Ne participe pas » (sit out) — le bot reste dans le lobby sans être compté. */
+export async function setSittingOut(client: Client, sitOut: boolean): Promise<void> {
+    return setReadyStatus(client, sitOut ? 'SittingOut' : 'NotReady');
 }
 
 export async function setEmote(client: Client, eid: string): Promise<void> {
@@ -112,6 +177,68 @@ export async function copyLoadoutFrom(client: Client, member: any): Promise<void
     await me.sendPatch({
         'Default:MpLoadout1_j': me.meta.set('Default:MpLoadout1_j', { MpLoadout1: { s } }),
     });
+}
+
+/**
+ * Copie l'emote en cours d'un membre (chemin d'asset brut + clé de chiffrement
+ * éventuelle) — utilisé par le mode mimic de !copy pour rejouer les danses.
+ */
+export async function copyEmoteFrom(client: Client, member: any): Promise<boolean> {
+    const me = getMe(client);
+    const src = member.meta?.get?.('Default:FrontendEmote_j')?.FrontendEmote;
+    const pickable = src?.pickable || 'None';
+
+    const prop = me.meta.get('Default:FrontendEmote_j');
+    const data = prop?.FrontendEmote && Object.keys(prop.FrontendEmote).length
+        ? prop.FrontendEmote
+        : { pickable: 'None', emoteEKey: '', emoteSection: -1, multipurposeEmoteData: -1 };
+
+    if (data.pickable === pickable) return false; // déjà identique, rien à rejouer
+    data.pickable = pickable;
+    data.emoteEKey = src?.emoteEKey || '';
+    if (src?.emoteSection !== undefined) data.emoteSection = src.emoteSection;
+
+    await me.sendPatch({
+        'Default:FrontendEmote_j': me.meta.set('Default:FrontendEmote_j', { FrontendEmote: data }),
+    });
+    return true;
+}
+
+// ── Mode mimic (!copy) ─────────────────────────────────────────────────────
+// Le bot suit un membre : à chaque mise à jour de son état (skin, style,
+// danse…), BotManager appelle syncMimicFromMember. WeakMap pour que l'état
+// disparaisse avec le client.
+const mimicTargets = new WeakMap<object, { targetId: string; lastLoadout: string }>();
+
+export function setMimicTarget(client: Client, memberId: string): void {
+    mimicTargets.set(client as any, { targetId: memberId, lastLoadout: '' });
+}
+
+export function getMimicTarget(client: Client): string | null {
+    return mimicTargets.get(client as any)?.targetId ?? null;
+}
+
+export function clearMimic(client: Client): boolean {
+    return mimicTargets.delete(client as any);
+}
+
+/** Recopie loadout + emote du membre suivi. Silencieux si rien n'a changé. */
+export async function syncMimicFromMember(client: Client, member: any): Promise<void> {
+    const state = mimicTargets.get(client as any);
+    if (!state || member.id !== state.targetId) return;
+
+    // Loadout : ne re-patcher que si le membre a vraiment changé quelque chose
+    const src = member.meta?.get?.('Default:MpLoadout1_j')?.MpLoadout1?.s;
+    if (src && Object.keys(src).length) {
+        const snapshot = JSON.stringify(src);
+        if (snapshot !== state.lastLoadout) {
+            state.lastLoadout = snapshot;
+            try { await copyLoadoutFrom(client, member); } catch (e) {}
+        }
+    }
+
+    // Danse : copyEmoteFrom est déjà idempotent (compare pickable)
+    try { await copyEmoteFrom(client, member); } catch (e) {}
 }
 
 // Parties dont le bot masque actuellement les membres (→ ids gardés visibles) —

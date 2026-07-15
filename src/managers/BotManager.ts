@@ -116,33 +116,27 @@ export class BotManager {
             return result;
         };
 
-        // Gestion de la déconnexion et reconnexion automatique
+        // Gestion de la déconnexion et reconnexion automatique.
+        // fnbr peut émettre 'disconnected' sans 'session:close' (ex: coupure
+        // réseau/VPN) — on reconnecte donc dans les deux cas, avec un délai
+        // pour laisser le réseau revenir.
         bot.on('disconnected', async () => {
             console.log(`[${identifier}] ⚠️ Déconnecté`);
             const instance = this.bots.get(account.email);
             if (instance) {
                 instance.isConnected = false;
             }
+            setTimeout(() => this.reconnectBot(account), 15000);
         });
 
         // Reconnexion automatique sur session close
         (bot as any).on('session:close', async () => {
             console.log(`[${identifier}] 🔄 Session fermée, tentative de reconnexion...`);
             const instance = this.bots.get(account.email);
-            if (instance && !this.failedBots.has(account.email)) {
+            if (instance) {
                 instance.isConnected = false;
-                setTimeout(async () => {
-                    try {
-                        await bot.login();
-                        instance.isConnected = true;
-                        console.log(`[${identifier}] ✅ Reconnecté!`);
-                    } catch (e: any) {
-                        console.error(`[${identifier}] ❌ Échec de reconnexion: ${e.message}`);
-                        // Réessayer dans 30s
-                        setTimeout(() => this.reconnectBot(account), 30000);
-                    }
-                }, 5000);
             }
+            setTimeout(() => this.reconnectBot(account), 5000);
         });
 
         // Bot prêt : définir le statut
@@ -387,8 +381,11 @@ export class BotManager {
         const identifier = account.pseudo || account.email;
         const instance = this.bots.get(account.email);
 
-        if (!instance || this.failedBots.has(account.email)) return;
+        // isReconnecting évite les tentatives concurrentes (déclencheurs
+        // multiples : 'disconnected', 'session:close', health check).
+        if (!instance || instance.isConnected || instance.isReconnecting || this.failedBots.has(account.email)) return;
 
+        instance.isReconnecting = true;
         try {
             console.log(`[${identifier}] 🔄 Tentative de reconnexion...`);
             await instance.client.login();
@@ -398,6 +395,8 @@ export class BotManager {
             console.error(`[${identifier}] ❌ Reconnexion échouée: ${e.message}`);
             // Réessayer dans 1 minute
             setTimeout(() => this.reconnectBot(account), 60000);
+        } finally {
+            instance.isReconnecting = false;
         }
     }
 
@@ -476,6 +475,14 @@ export class BotManager {
         setInterval(() => {
             const total = this.bots.size;
             const active = this.getActiveBots().filter(b => b.isConnected).length;
+
+            // Filet de sécurité : relance les bots restés déconnectés
+            // (les timers de reconnexion peuvent avoir tous échoué).
+            for (const instance of this.bots.values()) {
+                if (!instance.isConnected && !this.failedBots.has(instance.account.email)) {
+                    this.reconnectBot(instance.account);
+                }
+            }
 
             if (total > 0 && active < minActive) {
                 sendAlert(

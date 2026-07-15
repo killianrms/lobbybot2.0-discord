@@ -98,7 +98,15 @@ export class GeneratorManager {
         }
     }
 
-    private runGenerator(pseudoSuffix: string | undefined, count: number): Promise<BatchResult> {
+    private async runGenerator(pseudoSuffix: string | undefined, count: number): Promise<BatchResult> {
+        // Snapshot des comptes existants : le générateur écrit en base au fil de l'eau
+        // mais n'imprime son récap JSON qu'à la toute fin. Si ce récap manque (kill du
+        // watchdog, crash), la différence avant/après donne les succès partiels.
+        let beforeEmails = new Set<string>();
+        try {
+            beforeEmails = new Set((await this.dbManager.getAllBots()).map(b => b.email));
+        } catch { /* réconciliation best-effort */ }
+
         return new Promise((resolve) => {
             const generatorPath = process.env.GENERATOR_PATH;
             if (!generatorPath) {
@@ -121,26 +129,30 @@ export class GeneratorManager {
 
             let stdout = '';
             let stderr = '';
-            proc.stdout.on('data', (d) => { stdout += d.toString(); });
-            proc.stderr.on('data', (d) => { stderr += d.toString(); });
 
-            // Sécurité : le script pilote un navigateur + résout des captchas (CapSolver peut
-            // prendre plusieurs minutes), vérifie l'email, et attend 30s entre chaque compte.
-            // Les 90s/compte d'origine étaient très en dessous de la réalité : un batch de 5
-            // se faisait tuer à 7,5 min alors qu'il lui faut plutôt 15-25 min. On passe à 5 min
-            // de budget par compte (réglable), plancher 10 min, plafond 2h.
-            const perAccountMs = parseInt(process.env.GENERATOR_TIMEOUT_PER_ACCOUNT_MS || '300000', 10);
-            const timeoutMs = Math.min(2 * 60 * 60 * 1000, Math.max(10 * 60 * 1000, count * perAccountMs));
-            const timeout = setTimeout(() => {
-                proc.kill();
-                // Le générateur écrit les comptes en base au fil de l'eau : ceux déjà créés
-                // avant le kill ne sont pas perdus, ils seront repris au prochain démarrage.
-                console.error(`[GeneratorManager] ⏱️ Timeout après ${Math.round(timeoutMs / 60000)} min. Dernière sortie:\n${stdout.slice(-1500)}`);
-                resolve({ successes: [], failed: count, reason: `Timeout (${Math.round(timeoutMs / 60000)} min) — le générateur n'a pas répondu (les comptes déjà créés restent en base)` });
-            }, timeoutMs);
+            // Pas de limite de durée totale : le générateur est volontairement lent
+            // (comportement humain anti-détection), un batch légitime peut durer des heures.
+            // En revanche il écrit sa progression en continu ; un silence complet prolongé
+            // signifie navigateur/captcha gelé (déjà vu : Chrome orphelins). Le watchdog ne
+            // tue que dans ce cas, et la file d'attente passe au job suivant.
+            const stallMs = parseInt(process.env.GENERATOR_STALL_TIMEOUT_MS || String(15 * 60 * 1000), 10);
+            let stalled = false;
+            let stallTimer: NodeJS.Timeout | undefined;
+            const armStallTimer = () => {
+                if (stallTimer) clearTimeout(stallTimer);
+                stallTimer = setTimeout(() => {
+                    stalled = true;
+                    console.error(`[GeneratorManager] 🧊 Gelé : aucune sortie depuis ${Math.round(stallMs / 60000)} min. Dernière sortie:\n${stdout.slice(-1500)}`);
+                    proc.kill(); // déclenche 'close', qui réconcilie avec la base et résout
+                }, stallMs);
+            };
+            armStallTimer();
 
-            proc.on('close', (code) => {
-                clearTimeout(timeout);
+            proc.stdout.on('data', (d) => { stdout += d.toString(); armStallTimer(); });
+            proc.stderr.on('data', (d) => { stderr += d.toString(); armStallTimer(); });
+
+            proc.on('close', async (code) => {
+                if (stallTimer) clearTimeout(stallTimer);
 
                 // Le générateur imprime sa bannière ASCII avant le JSON final, et sous
                 // Windows les fins de ligne sont en \r\n : chercher un littéral "\n{\n"
@@ -150,26 +162,47 @@ export class GeneratorManager {
                 const jsonStart = stdout.search(/^\s*\{/m);
                 const jsonText = jsonStart >= 0 ? stdout.slice(jsonStart) : stdout;
 
+                let successes: { email: string; pseudo: string }[] = [];
+                let parseOk = false;
                 try {
                     const parsed = JSON.parse(jsonText);
                     const accounts: any[] = parsed?.accounts || [];
-                    const successes = accounts
+                    successes = accounts
                         .filter(a => a.status === 'success')
                         .map(a => ({ email: a.email, pseudo: a.pseudo }));
+                    parseOk = true;
+                } catch { /* récap absent (kill du watchdog, crash) — réconciliation ci-dessous */ }
 
-                    if (successes.length > 0) {
-                        resolve({ successes, failed: count - successes.length });
-                    } else {
-                        resolve({ successes: [], failed: count, reason: `Le générateur a échoué (code ${code})` });
-                    }
-                } catch {
-                    console.error('[GeneratorManager] Sortie non-JSON:', stdout.slice(-2000), stderr.slice(-2000));
-                    resolve({ successes: [], failed: count, reason: `Sortie invalide du générateur (code ${code})` });
+                if (successes.length === 0) {
+                    // Récap absent ou vide : les comptes déjà écrits en base pendant le run
+                    // sont pourtant de vrais succès — on les récupère par différence avec le
+                    // snapshot, et processNext() les assigne/lance comme d'habitude.
+                    try {
+                        const after = await this.dbManager.getAllBots();
+                        successes = after
+                            .filter(b => !beforeEmails.has(b.email))
+                            .map(b => ({ email: b.email, pseudo: b.pseudo || b.email }));
+                    } catch { /* base injoignable : on reste sur 0 succès */ }
                 }
+
+                const recovered = successes.length > 0 ? ` — ${successes.length} compte(s) récupéré(s) en base` : '';
+                let reason: string | undefined;
+                if (stalled) {
+                    reason = `Générateur gelé (aucune sortie pendant ${Math.round(stallMs / 60000)} min)${recovered}`;
+                    sendAlert('generator-stall', '🧊 Générateur gelé (tué par le watchdog)',
+                        `Batch de ${count}${recovered || ' — aucun compte récupéré'}.\n\`\`\`${stdout.slice(-800)}\`\`\``, 'warning');
+                } else if (!parseOk) {
+                    console.error('[GeneratorManager] Sortie non-JSON:', stdout.slice(-2000), stderr.slice(-2000));
+                    reason = `Sortie invalide du générateur (code ${code})${recovered}`;
+                } else if (successes.length === 0) {
+                    reason = `Le générateur a échoué (code ${code})`;
+                }
+
+                resolve({ successes, failed: Math.max(0, count - successes.length), ...(reason ? { reason } : {}) });
             });
 
             proc.on('error', (err) => {
-                clearTimeout(timeout);
+                if (stallTimer) clearTimeout(stallTimer);
                 resolve({ successes: [], failed: count, reason: `Impossible de lancer le générateur: ${err.message}` });
             });
         });

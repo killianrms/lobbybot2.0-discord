@@ -231,6 +231,14 @@ export class DatabaseManager {
         this.db.prepare('DELETE FROM premium WHERE discord_id = ?').run(discordId);
     }
 
+    /** Détails de l'abonnement (ou null). Ne filtre pas l'expiration — voir isPremium(). */
+    public getPremium(discordId: string): { source: string; granted_at: string | null; expires_at: string | null } | null {
+        const row = this.db
+            .prepare('SELECT source, granted_at, expires_at FROM premium WHERE discord_id = ?')
+            .get(discordId) as { source: string; granted_at: string | null; expires_at: string | null } | undefined;
+        return row ?? null;
+    }
+
     /** Tous les bots appartenant à cet utilisateur (flotte perso). */
     public getBotsByOwner(discordId: string): BotAccount[] {
         const rows = this.db

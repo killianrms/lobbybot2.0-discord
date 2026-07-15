@@ -1,6 +1,6 @@
 import { ChatInputCommandInteraction } from 'discord.js';
 import { DatabaseManager } from '../managers/DatabaseManager';
-import { PREMIUM_SKU_ID } from '../config/premium';
+import { PREMIUM_SKU_ID, premiumButtonRow } from '../config/premium';
 
 /**
  * Renvoie true si l'utilisateur est premium. Sinon répond avec un message
@@ -31,8 +31,10 @@ export function requirePremium(interaction: ChatInputCommandInteraction, dbManag
         }
     }
 
+    const row = premiumButtonRow();
     interaction.reply({
         content: '🔒 Cette commande est réservée à **LobbyBot Premium**.\nAbonne-toi pour débloquer ta flotte perso, `/squad`, les emotes synchronisées et les presets !',
+        components: row ? [row] : [],
         ephemeral: true
     }).catch(() => {});
     return false;

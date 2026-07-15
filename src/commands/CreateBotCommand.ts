@@ -1,6 +1,6 @@
 import { SlashCommandBuilder, ChatInputCommandInteraction } from 'discord.js';
 import { Command, CommandContext } from './Command';
-import { botQuotaFor } from '../config/premium';
+import { botQuotaFor, premiumButtonRow } from '../config/premium';
 
 const PSEUDO_REGEX = /^[A-Za-z0-9._-]{2,14}$/;
 
@@ -28,10 +28,13 @@ export const CreateBotCommand: Command = {
         const quota = botQuotaFor(isPremium);
         const owned = context.dbManager.getBotsByOwner(interaction.user.id);
         if (owned.length >= quota) {
+            // C'est LE moment où un utilisateur gratuit a envie de payer : bouton d'achat direct.
+            const row = !isPremium ? premiumButtonRow() : null;
             await interaction.reply({
                 content: isPremium
                     ? `ℹ️ Tu as atteint ta limite premium de **${quota} bots** (${owned.map(b => b.pseudo).join(', ')}).`
                     : `ℹ️ Tu as déjà un bot : **${owned[0].pseudo}**. Passe à **LobbyBot Premium** pour en avoir jusqu'à ${botQuotaFor(true)} !`,
+                components: row ? [row] : [],
                 ephemeral: true
             });
             return;

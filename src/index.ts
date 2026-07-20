@@ -40,6 +40,7 @@ async function main() {
     // Corrected arg order: BotManager first, then URL
     const socketManager = new SocketManager(
         botManager,
+        dbManager,
         process.env.DASHBOARD_URL || 'http://localhost:3000'
     );
 

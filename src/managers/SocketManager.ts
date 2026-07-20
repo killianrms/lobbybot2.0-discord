@@ -1,19 +1,25 @@
 import * as io from 'socket.io-client';
 import { BotManager } from './BotManager';
+import { DatabaseManager } from './DatabaseManager';
 import { BotAccount } from '../types';
 import { sendAlert } from '../utils/AlertManager';
+import { FortniteAPIService } from '../services/FortniteAPIService';
+
+const api = new FortniteAPIService();
 
 export class SocketManager {
     private socket: any;
     private botManager: BotManager;
+    private dbManager: DatabaseManager;
     private dashboardUrl: string;
     private reconnectAttempts: number = 0;
     private maxReconnectAttempts: number = 10;
     private reconnectDelay: number = 5000;
     private heartbeatInterval: any;
 
-    constructor(botManager: BotManager, dashboardUrl: string) {
+    constructor(botManager: BotManager, dbManager: DatabaseManager, dashboardUrl: string) {
         this.botManager = botManager;
+        this.dbManager = dbManager;
         this.dashboardUrl = dashboardUrl;
 
         const socketOptions: any = {
@@ -141,6 +147,71 @@ export class SocketManager {
         this.socket.on('config:globalUpdate', (config: { status?: string; joinMsg?: string; addMsg?: string }) => {
             console.log('📥 Global config update from admin:', config);
             this.botManager.applyGlobalConfig(config);
+        });
+
+        // ── Panel premium web (Phase 5) ──────────────────────────────────
+        // Répondent via callback d'acquittement (jamais de broadcast : ce sont
+        // des actions privées d'un utilisateur premium précis). Réutilisent
+        // exactement la même logique que /squad et /emote-all côté Discord.
+        this.socket.on('premium:squad', async (
+            data: { discordId: string },
+            callback: (result: { success: boolean; message: string }) => void,
+        ) => {
+            console.log(`📥 [Premium web] Squad demandé par ${data.discordId}`);
+            try {
+                const user = await this.dbManager.getUser(data.discordId);
+                if (!user?.deviceAuth?.accountId) {
+                    return callback({ success: false, message: "Connecte d'abord ton compte Epic avec /login sur Discord." });
+                }
+                const ownedBots = this.dbManager.getBotsByOwner(data.discordId);
+                if (ownedBots.length === 0) {
+                    return callback({ success: false, message: "Tu n'as pas encore de bot perso. Crée-en un avec /createbot." });
+                }
+                const activePseudos = new Set(
+                    this.botManager.getActiveBots().filter((b: any) => b.isConnected).map((b: any) => b.account.pseudo)
+                );
+                const online = ownedBots.filter((b: any) => b.pseudo && activePseudos.has(b.pseudo));
+                if (online.length === 0) {
+                    return callback({ success: false, message: 'Aucun de tes bots n\'est en ligne pour le moment. Réessaie dans un instant.' });
+                }
+
+                const results: string[] = [];
+                for (const bot of online) {
+                    const res = await this.botManager.inviteToParty(bot.pseudo as string, user.deviceAuth.accountId);
+                    results.push(`${bot.pseudo} → ${res.startsWith('✅') ? 'invité' : res}`);
+                    await new Promise((r) => setTimeout(r, 600));
+                }
+
+                const activePreset = this.dbManager.getActivePreset(data.discordId);
+                if (activePreset) {
+                    await this.botManager.applyLoadoutToOwned(data.discordId, activePreset);
+                }
+
+                callback({ success: true, message: `${online.length} bot(s) invité(s) : ${results.join(', ')}. Accepte dans Fortnite !` });
+            } catch (e: any) {
+                console.error('❌ [Premium web] Erreur squad:', e.message);
+                callback({ success: false, message: 'Erreur serveur : ' + e.message });
+            }
+        });
+
+        this.socket.on('premium:emoteAll', async (
+            data: { discordId: string; query: string },
+            callback: (result: { success: boolean; message: string }) => void,
+        ) => {
+            console.log(`📥 [Premium web] Emote-all demandé par ${data.discordId}: ${data.query}`);
+            try {
+                const item = await api.searchCosmetic(data.query, 'emote');
+                if (!item) return callback({ success: false, message: `Emote "${data.query}" introuvable.` });
+                const count = await this.botManager.emoteAllOwned(data.discordId, item.id);
+                callback(
+                    count > 0
+                        ? { success: true, message: `${item.name} jouée sur ${count} de tes bots !` }
+                        : { success: false, message: "Aucun de tes bots n'est en ligne. Fais d'abord /squad." }
+                );
+            } catch (e: any) {
+                console.error('❌ [Premium web] Erreur emote-all:', e.message);
+                callback({ success: false, message: 'Erreur serveur : ' + e.message });
+            }
         });
     }
 

@@ -23,6 +23,7 @@ import { SquadCommand } from './SquadCommand';
 import { EmoteAllCommand } from './EmoteAllCommand';
 import { PresetCommand } from './PresetCommand';
 import { PremiumCommand } from './PremiumCommand';
+import { ControlCommand } from './ControlCommand';
 
 const baseCommands: Command[] = [
     LoginCommand,
@@ -48,6 +49,7 @@ const baseCommands: Command[] = [
     EmoteAllCommand,
     PresetCommand,
     PremiumCommand,
+    ControlCommand,
 ];
 
 // /createbot reste caché tant que fn_account_generator n'est pas fiable à 100%

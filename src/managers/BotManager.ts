@@ -12,6 +12,7 @@ import { sendEOSPresence } from '../utils/EOSPresence';
 import * as ModernParty from '../utils/ModernParty';
 import * as SecureChat from '../utils/SecureChat';
 import * as FailedBotRegistry from '../utils/FailedBotRegistry';
+import * as BotLobby from '../services/BotLobbyService';
 
 export class BotManager {
     private bots: Map<string, any> = new Map();
@@ -27,6 +28,12 @@ export class BotManager {
     // et les invitations sont refusées ; le bot redevient dispo quand il est seul.
     // Désactivable via EXCLUSIVE_LOBBY=false.
     private exclusiveLobby: boolean = process.env.EXCLUSIVE_LOBBY !== 'false';
+
+    // Anti-troll/AFK : un joueur qui occupe un bot sans aucune activité (commande,
+    // changement de skin/emote…) pendant EXCLUSIVE_IDLE_MINUTES est kick et le
+    // lobby rouvre. Toute activité réinitialise le compte à rebours.
+    private exclusiveIdleMs: number = Math.max(1, parseInt(process.env.EXCLUSIVE_IDLE_MINUTES || '5', 10)) * 60_000;
+    private idleTimers: Map<string, NodeJS.Timeout> = new Map();
 
     // Global config (managed from admin dashboard)
     public globalStatus: string = 'USE CODE CREATOR: aeroz';
@@ -68,12 +75,20 @@ export class BotManager {
             const bot = new Client({
                 auth: {
                     deviceAuth: account.deviceAuth,
-                    authClient: 'fortniteAndroidGameClient'
+                    authClient: 'fortniteAndroidGameClient',
+                    // Accepte l'EULA + grant_access à chaque login → le compte
+                    // obtient l'action « PLAY » nécessaire au matchmaking (bot
+                    // lobby /control). Sans ça : "does not possess the action PLAY".
+                    checkEULA: true,
                 },
                 connectToSTOMP: true,
                 connectToXMPP: true,
                 debug: (msg) => {
-                    // console.log(msg);
+                    // On ne veut pas tout le bruit debug de fnbr, juste confirmer
+                    // le provisioning EULA/accès jeu (droit PLAY pour le matchmaking).
+                    if (typeof msg === 'string' && /EULA/i.test(msg)) {
+                        console.log(`[${identifier}] 📜 ${msg}`);
+                    }
                 }
             });
 
@@ -236,7 +251,19 @@ export class BotManager {
         // du joueur copié. fnbr émet party:member:updated à chaque patch de meta.
         (bot as any).on('party:member:updated', async (member: any) => {
             if (member.id === bot.user?.self?.id) return;
+            this.touchActivity(bot); // le joueur change de skin/emote → pas AFK
             try { await ModernParty.syncMimicFromMember(bot, member); } catch (e) {}
+            // Bot lobby : le joueur (chef) a-t-il lancé une partie ? → le bot quitte
+            this.handleBotLobbyHandoff(bot, identifier);
+        });
+
+        // Le chef (joueur promu) entre en matchmaking / en partie : le bot quitte
+        (bot as any).on('party:member:matchstate:updated', async () => {
+            this.handleBotLobbyHandoff(bot, identifier);
+        });
+
+        (bot as any).on('party:updated', async () => {
+            this.handleBotLobbyHandoff(bot, identifier);
         });
 
         // Rappel du message de lobby quand quelqu'un part (utile en gros groupe)
@@ -273,6 +300,8 @@ export class BotManager {
             } catch (e) {
                 console.log(`[${identifier}] 💬 [LOBBY] ${message.author.displayName}: ${message.content}`);
             }
+
+            this.touchActivity(bot); // un message dans le lobby = joueur actif
 
             const fakeMessage = {
                 content: realMessage,
@@ -355,6 +384,14 @@ export class BotManager {
      * (utile quand le bot REJOINT le lobby de quelqu'un : il ne verrait sinon que
      * les arrivées suivantes). Espacé légèrement pour ne pas déclencher le rate-limit.
      */
+    /** Si un bot lobby est armé et que la partie a démarré, fait quitter le bot. */
+    private handleBotLobbyHandoff(bot: Client, identifier: string): void {
+        if (!BotLobby.getHandoff(bot)) return;
+        BotLobby.maybeLeaveForHandoff(bot).then(left => {
+            if (left) console.log(`[${identifier}] 🎮 Bot lobby : partie lancée, bot sorti — joueur laissé seul.`);
+        }).catch(() => {});
+    }
+
     /** Nombre de membres de la party autres que le bot lui-même. */
     private countOtherMembers(bot: Client): number {
         const members: any[] = Array.from((bot as any).party?.members?.values?.() ?? []);
@@ -369,11 +406,18 @@ export class BotManager {
      */
     private async updateExclusivity(bot: Client, identifier: string): Promise<void> {
         if (!this.exclusiveLobby) return;
-        const party: any = (bot as any).party;
-        if (!party?.me?.isLeader) return; // pas notre lobby → pas notre privacy
-
         const instance = this.findInstanceByClient(bot);
         const occupied = this.countOtherMembers(bot) >= 1;
+
+        // Compte à rebours anti-AFK (même si le bot n'est pas chef :
+        // squatter un bot dans SA party le bloque aussi)
+        if (instance) {
+            if (occupied) this.armIdleTimer(bot, instance, identifier);
+            else this.clearIdleTimer(instance.account.email);
+        }
+
+        const party: any = (bot as any).party;
+        if (!party?.me?.isLeader) return; // pas notre lobby → pas notre privacy
         if (instance && instance.isPrivatized === occupied) return;
 
         try {
@@ -382,6 +426,55 @@ export class BotManager {
             console.log(`[${identifier}] ${occupied ? '🔒 Lobby verrouillé (joueur présent)' : '🔓 Lobby rouvert (bot seul)'}`);
         } catch (e: any) {
             console.error(`[${identifier}] ❌ Privacy exclusivité: ${e.message}`);
+        }
+    }
+
+    private armIdleTimer(bot: Client, instance: any, identifier: string): void {
+        this.clearIdleTimer(instance.account.email);
+        this.idleTimers.set(instance.account.email, setTimeout(() => {
+            this.idleTimers.delete(instance.account.email);
+            this.freeIdleLobby(bot, identifier).catch(() => {});
+        }, this.exclusiveIdleMs));
+    }
+
+    private clearIdleTimer(email: string): void {
+        const t = this.idleTimers.get(email);
+        if (t) {
+            clearTimeout(t);
+            this.idleTimers.delete(email);
+        }
+    }
+
+    /** Toute activité d'un joueur (commande, changement de meta) repousse le kick AFK. */
+    private touchActivity(bot: Client): void {
+        const instance = this.findInstanceByClient(bot);
+        if (!instance) return;
+        if (this.idleTimers.has(instance.account.email)) {
+            this.armIdleTimer(bot, instance, instance.account.pseudo || instance.account.email);
+        }
+    }
+
+    /** Délai AFK dépassé : on prévient, on kick (ou on part) et le lobby rouvre. */
+    private async freeIdleLobby(bot: Client, identifier: string): Promise<void> {
+        const party: any = (bot as any).party;
+        if (!party) return;
+        const others: any[] = Array.from(party.members?.values?.() ?? [])
+            .filter((m: any) => m.id !== bot.user?.self?.id);
+        if (!others.length) return;
+
+        const minutes = Math.round(this.exclusiveIdleMs / 60000);
+        try {
+            await SecureChat.sendPartyMessage(bot, `⏳ ${minutes} min without activity — I'm freeing the lobby! Invite me again anytime 👋`);
+        } catch (e) {}
+
+        if (party.me?.isLeader) {
+            for (const m of others) {
+                try { await m.kick(); } catch (e) {}
+            }
+            console.log(`[${identifier}] 🧹 Lobby libéré après ${minutes} min d'inactivité (${others.length} joueur(s) kick)`);
+        } else {
+            try { await party.leave(); } catch (e) {}
+            console.log(`[${identifier}] 🧹 Party quittée après ${minutes} min d'inactivité`);
         }
     }
 
@@ -481,6 +574,7 @@ export class BotManager {
         this.bots.delete(email);
         this.cosmeticManagers.delete(email);
         this.sentMessageIds.delete(email);
+        this.clearIdleTimer(email);
         const pendingPresence = this.eosPresenceTimers.get(email);
         if (pendingPresence) {
             clearTimeout(pendingPresence);
@@ -684,6 +778,34 @@ export class BotManager {
             }
         }
         return count;
+    }
+
+    // ══════════════ BOT LOBBY (handoff) ══════════════
+    /**
+     * Trouve le bot connecté dont la party contient CE joueur (accountId Epic)
+     * et où le bot est CHEF — condition pour piloter un bot lobby.
+     */
+    getBotHostingUser(accountId: string): any | null {
+        if (!accountId) return null;
+        return this.getActiveBots().find(b => {
+            const party: any = b.isConnected && b.client?.party;
+            if (!party?.me?.isLeader) return false;
+            const members: any[] = Array.from(party.members?.values?.() ?? []);
+            return members.some(m => m.id === accountId);
+        }) || null;
+    }
+
+    /**
+     * Démarre un bot lobby : le bot promeut le joueur chef et arme son départ
+     * automatique au lancement de la partie (le vrai client du joueur matchmake ;
+     * le compte bot bas niveau tire le lobby vers des bots, puis quitte).
+     */
+    async startBotLobby(botPseudo: string, userAccountId: string): Promise<string> {
+        const inst = this.getActiveBots().find(b => b.account.pseudo === botPseudo);
+        if (!inst?.isConnected || !inst.client?.party) return `❌ Bot **${botPseudo}** hors ligne ou sans groupe.`;
+        // Pas de kick AFK pendant qu'on prépare/attend le lancement
+        this.clearIdleTimer(inst.account.email);
+        return BotLobby.startHandoff(inst.client, userAccountId);
     }
 
     async addFriendOnAvailableBot(targetUsername: string): Promise<'SUCCESS' | 'ERROR' | 'FULL' | 'ALREADY_FRIENDS'> {

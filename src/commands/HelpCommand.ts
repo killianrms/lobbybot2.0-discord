@@ -315,6 +315,15 @@ const DISCORD_PREMIUM: CmdEntry[] = [
         },
     },
     {
+        usage: '/control', emoji: '🎮',
+        desc: {
+            en: '**[Premium]** Bot lobby! The bot gives you the lead — launch a game in Fortnite and it drops out so you land in a lobby full of bots.',
+            fr: '**[Premium]** Bot lobby ! Le bot te passe le lead — lance une partie dans Fortnite et il quitte pour te laisser dans un lobby rempli de bots.',
+            es: '**[Premium]** ¡Bot lobby! El bot te da el liderazgo — lanza una partida en Fortnite y se va para dejarte en un lobby lleno de bots.',
+            de: '**[Premium]** Bot-Lobby! Der Bot gibt dir die Führung — starte ein Match in Fortnite und er steigt aus, damit du in einer Bot-Lobby landest.',
+        },
+    },
+    {
         usage: '/squad', emoji: '🤝',
         desc: {
             en: '**[Premium]** Your own personal bots join your Fortnite party — a full squad just for you.',

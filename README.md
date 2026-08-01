@@ -8,7 +8,8 @@ Le cœur du système de gestion de bots Fortnite. Ce projet permet de gérer des
 *   **Recherche cosmétique intelligente** : plus de 10 000 cosmétiques indexés en mémoire, tolérance aux fautes de frappe et styles compris directement dans la commande (`!skin ghoul rose` → Ghoul Trooper Pink, `!skin skull violet` → Purple Glow, `!skin drift 4` → Stage 4).
 *   **Copie complète (`!copy`)** : le bot copie le skin, les styles **et rejoue les danses du joueur en direct** (mode mimic).
 *   **Défilé des nouveautés (`!new`)** : le bot équipe un par un les cosmétiques ajoutés par la dernière MAJ — souvent avant leur sortie en boutique.
-*   **Lobby exclusif** : dès qu'un joueur rejoint un bot, sa party passe en privé et il refuse les autres invitations ; il redevient disponible quand il est seul (`EXCLUSIVE_LOBBY=false` pour désactiver).
+*   **Lobby exclusif** : dès qu'un joueur rejoint un bot, sa party passe en privé et il refuse les autres invitations ; il redevient disponible quand il est seul (`EXCLUSIVE_LOBBY=false` pour désactiver). Un joueur AFK est libéré après `EXCLUSIVE_IDLE_MINUTES` (défaut 5) pour éviter les trolls.
+*   **Bot lobby (`/control`)** : le bot promeut le joueur chef ; le joueur lance la partie depuis son propre client Fortnite (le vrai matchmaking, qui possède le droit « PLAY »), le compte bot **bas niveau** tire le lobby vers des bots, puis quitte au démarrage. Aucune API non officielle. ⚠️ Ne fonctionne que si le compte bot est récent / bas niveau.
 *   **Load Balancing Intelligent** : sélectionne automatiquement le bot le moins chargé (<900 amis) pour les nouveaux amis.
 *   **LobbyBot Premium** : flotte de bots perso via les abonnements Discord natifs (`/premium`, `/squad`, `/emote-all`, `/preset`).
 *   **Internationalisation (i18n)** : anglais par défaut, FR/ES/DE via `/setlangage` (les noms de commandes slash restent en anglais, seules les descriptions/réponses changent).
@@ -52,6 +53,7 @@ Le cœur du système de gestion de bots Fortnite. Ce projet permet de gérer des
 
 ### 💎 Premium (abonnement Discord natif)
 *   `/premium` : découvrir / gérer son abonnement.
+*   `/control` : **bot lobby** — le bot te passe le lead, tu lances la partie, il quitte → lobby de bots.
 *   `/squad` : ses bots perso rejoignent son groupe Fortnite.
 *   `/emote-all <nom>` : tous ses bots dansent la même emote en même temps.
 *   `/preset save|apply|list` : loadouts complets sauvegardés et appliqués à toute la flotte.
@@ -86,6 +88,8 @@ docker-compose up -d --build
 | Variable | Rôle |
 |---|---|
 | `EXCLUSIVE_LOBBY` | `true` (défaut) : bot occupé = party privée + invitations refusées |
+| `EXCLUSIVE_IDLE_MINUTES` | libération auto d'un joueur AFK (défaut 5) |
+| `BOTLOBBY_LEAVE_DELAY_MS` | délai avant que le bot quitte au lancement d'un bot lobby (défaut 2500) |
 | `LOBBY_ADMIN_PSEUDOS` | pseudos Epic autorisés aux commandes admin in-game |
 | `DEFAULT_SKIN` / `DEFAULT_LEVEL` | loadout appliqué à chaque nouvelle party |
 | `PREMIUM_BOT_QUOTA` / `PREMIUM_SKU_ID` | config LobbyBot Premium |

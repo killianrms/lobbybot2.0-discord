@@ -1,26 +1,27 @@
+# Déploiement vm-prod : suppose les projets frères et le dossier data au même niveau :
+#   apps/
+#   ├── lobbybot2.0-discord/   (ce repo)
+#   ├── lobbybot2.0-website/
+#   ├── fn_account_generator/  (repo privé, transféré manuellement)
+#   └── data/                  (lobbybot.db partagée + backups/ — hors git)
 services:
   website:
     build: ../lobbybot2.0-website
-    restart: always
+    container_name: lobbybot-website
+    restart: unless-stopped
     ports:
       - "3000:3000"
-    environment:
-      - PORT=3000
-      - EPIC_MASTER_KEY=${EPIC_MASTER_KEY}
+    env_file: ../lobbybot2.0-website/.env
+    volumes:
+      - ../data:/app/data
 
   manager:
     build: .
-    restart: always
-    environment:
-      - DISCORD_TOKEN=${DISCORD_TOKEN}
-      - DASHBOARD_URL=http://website:3000
-      - DB_HOST=${DB_HOST}
-      - DB_PORT=${DB_PORT}
-      - DB_USER=${DB_USER}
-      - DB_PASS=${DB_PASS}
-      - DB_NAME=${DB_NAME}
-      - EPIC_MASTER_KEY=${EPIC_MASTER_KEY}
+    container_name: lobbybot-manager
+    restart: unless-stopped
+    env_file: .env
     volumes:
-      - ./accounts.csv:/app/accounts.csv
+      - ../data:/app/data
+      - ../fn_account_generator:/app/generator
     depends_on:
       - website

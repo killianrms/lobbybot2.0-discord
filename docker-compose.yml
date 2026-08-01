@@ -25,3 +25,14 @@ services:
       - ../fn_account_generator:/app/generator
     depends_on:
       - website
+
+  uptime-kuma:
+    image: louislam/uptime-kuma:1
+    container_name: uptime-kuma
+    restart: unless-stopped
+    ports:
+      # local + Tailscale uniquement (tailscale serve proxifie vers 127.0.0.1)
+      - "127.0.0.1:3001:3001"
+      - "192.168.1.11:3001:3001"
+    volumes:
+      - ../data/uptime-kuma:/app/data

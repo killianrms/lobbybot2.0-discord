@@ -66,7 +66,9 @@ CREATE TABLE dashboard_admins (
     created_at      TIMESTAMPTZ DEFAULT now(),
     -- Lien vers le compte Discord de l'admin : le dashboard filtre les bots
     -- par owner_discord_id de l'admin connecté.
-    discord_id      TEXT
+    discord_id      TEXT,
+    -- 1 = mot de passe temporaire : changement obligatoire au premier login
+    must_change_password INTEGER DEFAULT 0
 );
 
 CREATE TABLE dashboard_config (

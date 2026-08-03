@@ -49,6 +49,7 @@ async function main() {
     const discordManager = new DiscordManager(botManager, userManager, apiManager, dbManager, generatorManager, backupManager);
 
     // 2. Start Services
+    await botManager.refreshOwnerSettings(); // config par owner AVANT le lancement des bots
     await botManager.launchAllBots();
 
     // Sync dashboard after all bots are up, then every 30s

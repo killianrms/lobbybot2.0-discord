@@ -1,4 +1,4 @@
-import Database from 'better-sqlite3';
+import { Pool, PoolClient } from 'pg';
 
 export interface LoadoutPreset {
     name: string;
@@ -8,127 +8,83 @@ export interface LoadoutPreset {
     emote?: string;
     isActive: boolean;
 }
-import * as path from 'path';
-import * as fs from 'fs';
+
+export interface OwnerSettings {
+    ownerDiscordId: string;
+    creatorCode?: string;
+    status?: string;
+    joinMsg?: string;
+    addMsg?: string;
+}
+
 import { BotAccount } from '../types';
 import { CSVManager } from './CSVManager';
 
 /**
- * DatabaseManager — SQLite backend (shared with the web dashboard).
+ * DatabaseManager — backend PostgreSQL (base partagée avec le dashboard et
+ * fn_account_generator).
  *
- * The database file is shared with lobbybot2.0-website so the Discord manager
- * and the dashboard read/write the exact same bots and users.
+ * Connexion via DATABASE_URL, ex :
+ *   DATABASE_URL=postgresql://lobbybot:***@postgres:5432/lobbybot
  *
- * Set DB_PATH in .env to the dashboard's data/lobbybot.db file, e.g.:
- *   DB_PATH=C:\\Users\\Aeroz\\Desktop\\dev\\bot\\lobbybot2.0-website\\data\\lobbybot.db
- *
- * If DB_PATH is not set, it falls back to a local ./data/lobbybot.db file.
+ * Le schéma est créé par postgres-init/01-init.sh au premier démarrage du
+ * conteneur postgres ; ici on ne fait que le consommer.
  */
 export class DatabaseManager {
-    private db: Database.Database;
+    private pool: Pool;
     private csvManager: CSVManager;
-    public readonly dbPath: string;
 
     constructor(csvManager: CSVManager) {
         this.csvManager = csvManager;
 
-        const dbPath = process.env.DB_PATH || path.join(__dirname, '../../data/lobbybot.db');
-        this.dbPath = dbPath;
-        fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+        const url = process.env.DATABASE_URL;
+        if (!url) throw new Error('DATABASE_URL manquant (postgresql://user:pass@host:5432/lobbybot)');
+        this.pool = new Pool({ connectionString: url, max: 5 });
+        this.pool.on('error', (err) => console.error('[Database] Pool error:', err.message));
 
-        this.db = new Database(dbPath, { timeout: 30000 });
-        this.db.pragma('journal_mode = WAL');
-        this.db.pragma('synchronous = NORMAL');
-        this.db.pragma('foreign_keys = ON');
-        this.db.pragma('busy_timeout = 30000');
-
-        console.log(`[Database] SQLite connected: ${dbPath}`);
+        console.log('[Database] PostgreSQL pool ready');
     }
 
     public async init(): Promise<void> {
-        // Create tables (idempotent — matches the dashboard schema)
-        this.db.exec(`
-            CREATE TABLE IF NOT EXISTS epic_accounts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                email TEXT UNIQUE NOT NULL,
-                pseudo TEXT,
-                password_enc TEXT,
-                secret_id TEXT,
-                device_id TEXT,
-                account_id TEXT,
-                is_active INTEGER DEFAULT 1,
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                last_used_at DATETIME
-            );
-            CREATE TABLE IF NOT EXISTS users (
-                discord_id TEXT PRIMARY KEY,
-                epic_pseudo TEXT,
-                device_id TEXT,
-                account_id TEXT,
-                secret TEXT,
-                language TEXT DEFAULT 'en',
-                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            );
-            CREATE TABLE IF NOT EXISTS premium (
-                discord_id TEXT PRIMARY KEY,
-                source TEXT NOT NULL,
-                granted_at TEXT NOT NULL,
-                expires_at TEXT
-            );
-        `);
-
-        this.db.exec(`
-            CREATE TABLE IF NOT EXISTS loadout_presets (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                discord_id TEXT NOT NULL,
-                name TEXT NOT NULL,
-                outfit TEXT,
-                backpack TEXT,
-                pickaxe TEXT,
-                emote TEXT,
-                is_active INTEGER NOT NULL DEFAULT 0,
-                UNIQUE(discord_id, name)
-            );
-        `);
-        console.log('[Database] Tables ready');
-
-        // Migration : owner_discord_id (bots générés en self-service via /createbot).
-        // La table est aussi écrite par fn_account_generator (Python), qui ne connaît
-        // pas cette colonne — on l'ajoute nous-mêmes si elle manque.
-        const columns = this.db.prepare("PRAGMA table_info(epic_accounts)").all() as any[];
-        if (!columns.some(c => c.name === 'owner_discord_id')) {
-            this.db.exec('ALTER TABLE epic_accounts ADD COLUMN owner_discord_id TEXT');
-            console.log('[Database] Migration: colonne owner_discord_id ajoutée');
-        }
-
+        const { rows } = await this.pool.query('SELECT current_database() AS db, version() AS v');
+        console.log(`[Database] Connected: ${rows[0].db} (${String(rows[0].v).split(' on ')[0]})`);
         await this.checkMigration();
+    }
+
+    /** Exécute fn dans une transaction (BEGIN/COMMIT, ROLLBACK sur erreur). */
+    public async withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
+        const client = await this.pool.connect();
+        try {
+            await client.query('BEGIN');
+            const result = await fn(client);
+            await client.query('COMMIT');
+            return result;
+        } catch (e) {
+            await client.query('ROLLBACK');
+            throw e;
+        } finally {
+            client.release();
+        }
     }
 
     private async checkMigration(): Promise<void> {
         try {
-            const row = this.db.prepare('SELECT COUNT(*) AS count FROM epic_accounts').get() as { count: number };
-            if (row.count === 0) {
+            const { rows } = await this.pool.query('SELECT COUNT(*)::int AS count FROM epic_accounts');
+            if (rows[0].count === 0) {
                 console.log('[Database] DB empty, checking for CSV migration...');
                 const accounts = await this.csvManager.readAccounts();
                 if (accounts.length > 0) {
                     console.log(`[Database] Found ${accounts.length} accounts in CSV. Migrating...`);
-                    const insert = this.db.prepare(`
-                        INSERT INTO epic_accounts (email, pseudo, device_id, account_id, secret_id)
-                        VALUES (?, ?, ?, ?, ?)
-                        ON CONFLICT(email) DO NOTHING
-                    `);
-                    const migrate = this.db.transaction((rows: BotAccount[]) => {
-                        for (const bot of rows) {
-                            insert.run(
-                                bot.email,
-                                bot.pseudo,
-                                bot.deviceAuth?.deviceId,
-                                bot.deviceAuth?.accountId,
-                                bot.deviceAuth?.secret
+                    await this.withTransaction(async (client) => {
+                        for (const bot of accounts) {
+                            await client.query(
+                                `INSERT INTO epic_accounts (email, pseudo, device_id, account_id, secret_id)
+                                 VALUES ($1, $2, $3, $4, $5)
+                                 ON CONFLICT (email) DO NOTHING`,
+                                [bot.email, bot.pseudo, bot.deviceAuth?.deviceId, bot.deviceAuth?.accountId, bot.deviceAuth?.secret]
                             );
                         }
                     });
-                    migrate(accounts);
                     console.log('[Database] Migration complete!');
                 }
             }
@@ -137,140 +93,206 @@ export class DatabaseManager {
         }
     }
 
-    public async getAllBots(): Promise<BotAccount[]> {
-        const rows = this.db.prepare('SELECT * FROM epic_accounts WHERE is_active IS NOT 0').all() as any[];
-        return rows
-            .filter(row => row.secret_id)
-            .map(row => ({
-                email: row.email,
-                pseudo: row.pseudo,
-                password: '',
-                deviceAuth: { deviceId: row.device_id, accountId: row.account_id, secret: row.secret_id }
-            }));
+    private rowToBot(row: any): BotAccount {
+        return {
+            email: row.email,
+            pseudo: row.pseudo,
+            password: '',
+            ownerDiscordId: row.owner_discord_id ?? undefined,
+            deviceAuth: { deviceId: row.device_id, accountId: row.account_id, secret: row.secret_id }
+        };
     }
 
-    public async addBot(account: BotAccount): Promise<void> {
-        this.db.prepare(`
-            INSERT INTO epic_accounts (email, pseudo, device_id, account_id, secret_id, is_active)
-            VALUES (?, ?, ?, ?, ?, 1)
-            ON CONFLICT(email) DO UPDATE SET
-                pseudo = excluded.pseudo,
-                device_id = excluded.device_id,
-                account_id = excluded.account_id,
-                secret_id = excluded.secret_id,
-                is_active = 1
-        `).run(
-            account.email,
-            account.pseudo,
-            account.deviceAuth?.deviceId,
-            account.deviceAuth?.accountId,
-            account.deviceAuth?.secret
+    public async getAllBots(): Promise<BotAccount[]> {
+        const { rows } = await this.pool.query(
+            "SELECT * FROM epic_accounts WHERE is_active IS DISTINCT FROM 0 AND secret_id IS NOT NULL AND secret_id <> ''"
+        );
+        return rows.map(r => this.rowToBot(r));
+    }
+
+    public async addBot(account: BotAccount, ownerDiscordId?: string): Promise<void> {
+        await this.pool.query(
+            `INSERT INTO epic_accounts (email, pseudo, device_id, account_id, secret_id, is_active, owner_discord_id)
+             VALUES ($1, $2, $3, $4, $5, 1, $6)
+             ON CONFLICT (email) DO UPDATE SET
+                 pseudo = EXCLUDED.pseudo,
+                 device_id = EXCLUDED.device_id,
+                 account_id = EXCLUDED.account_id,
+                 secret_id = EXCLUDED.secret_id,
+                 is_active = 1,
+                 owner_discord_id = COALESCE(EXCLUDED.owner_discord_id, epic_accounts.owner_discord_id)`,
+            [account.email, account.pseudo, account.deviceAuth?.deviceId, account.deviceAuth?.accountId,
+             account.deviceAuth?.secret, ownerDiscordId ?? account.ownerDiscordId ?? null]
         );
     }
 
+    /**
+     * Import en masse (upsert par email) — utilisé par /admin addbot avec un
+     * fichier JSON. Tout passe dans UNE transaction. Retourne inserted/updated.
+     */
+    public async importBots(
+        bots: Array<{ email: string; pseudo?: string; password_enc?: string; deviceId?: string; accountId?: string; secret?: string }>,
+        ownerDiscordId: string
+    ): Promise<{ inserted: number; updated: number }> {
+        let inserted = 0;
+        let updated = 0;
+        await this.withTransaction(async (client) => {
+            for (const b of bots) {
+                const res = await client.query(
+                    `INSERT INTO epic_accounts (email, pseudo, password_enc, device_id, account_id, secret_id, is_active, owner_discord_id)
+                     VALUES ($1, $2, $3, $4, $5, $6, 1, $7)
+                     ON CONFLICT (email) DO UPDATE SET
+                         pseudo = EXCLUDED.pseudo,
+                         password_enc = COALESCE(EXCLUDED.password_enc, epic_accounts.password_enc),
+                         device_id = EXCLUDED.device_id,
+                         account_id = EXCLUDED.account_id,
+                         secret_id = EXCLUDED.secret_id,
+                         is_active = 1,
+                         owner_discord_id = EXCLUDED.owner_discord_id
+                     RETURNING (xmax = 0) AS inserted`,
+                    [b.email, b.pseudo ?? null, b.password_enc ?? null, b.deviceId ?? null,
+                     b.accountId ?? null, b.secret ?? null, ownerDiscordId]
+                );
+                if (res.rows[0]?.inserted) inserted++; else updated++;
+            }
+        });
+        return { inserted, updated };
+    }
+
     public async removeBot(email: string): Promise<void> {
-        this.db.prepare('DELETE FROM epic_accounts WHERE email = ?').run(email);
+        await this.pool.query('DELETE FROM epic_accounts WHERE email = $1', [email]);
     }
 
     public async getBotByOwner(discordId: string): Promise<BotAccount | null> {
-        const row = this.db.prepare('SELECT * FROM epic_accounts WHERE owner_discord_id = ?').get(discordId) as any;
-        if (!row) return null;
-        return {
-            email: row.email,
-            pseudo: row.pseudo,
-            password: '',
-            ownerDiscordId: row.owner_discord_id,
-            deviceAuth: { deviceId: row.device_id, accountId: row.account_id, secret: row.secret_id }
-        };
+        const { rows } = await this.pool.query('SELECT * FROM epic_accounts WHERE owner_discord_id = $1 LIMIT 1', [discordId]);
+        return rows[0] ? this.rowToBot(rows[0]) : null;
     }
 
     public async getBotByEmail(email: string): Promise<BotAccount | null> {
-        const row = this.db.prepare('SELECT * FROM epic_accounts WHERE email = ?').get(email) as any;
-        if (!row) return null;
-        return {
-            email: row.email,
-            pseudo: row.pseudo,
-            password: '',
-            ownerDiscordId: row.owner_discord_id,
-            deviceAuth: { deviceId: row.device_id, accountId: row.account_id, secret: row.secret_id }
-        };
+        const { rows } = await this.pool.query('SELECT * FROM epic_accounts WHERE email = $1', [email]);
+        return rows[0] ? this.rowToBot(rows[0]) : null;
     }
 
     public async setBotOwner(email: string, discordId: string): Promise<void> {
-        this.db.prepare('UPDATE epic_accounts SET owner_discord_id = ? WHERE email = ?').run(discordId, email);
+        await this.pool.query('UPDATE epic_accounts SET owner_discord_id = $1 WHERE email = $2', [discordId, email]);
+    }
+
+    /** Tous les bots appartenant à cet utilisateur (flotte perso). */
+    public async getBotsByOwner(discordId: string): Promise<BotAccount[]> {
+        const { rows } = await this.pool.query('SELECT * FROM epic_accounts WHERE owner_discord_id = $1 ORDER BY created_at', [discordId]);
+        return rows.map(r => this.rowToBot(r));
+    }
+
+    // --- ADMINS (table admins ; fallback .env ADMIN_IDS si table vide) ---
+
+    public async getAdminIds(): Promise<string[]> {
+        try {
+            const { rows } = await this.pool.query('SELECT discord_id FROM admins');
+            if (rows.length > 0) return rows.map(r => r.discord_id);
+        } catch (e: any) {
+            console.error('[Database] getAdminIds:', e.message);
+        }
+        // Fallback de secours : .env (base injoignable ou table vide)
+        return process.env.ADMIN_IDS?.split(',').map(id => id.trim()).filter(Boolean)
+            || ['335755692134891520'];
+    }
+
+    public async isAdmin(discordId: string): Promise<boolean> {
+        return (await this.getAdminIds()).includes(discordId);
+    }
+
+    // --- OWNER SETTINGS (code créateur + messages par propriétaire) ---
+
+    public async getOwnerSettings(ownerDiscordId: string): Promise<OwnerSettings | null> {
+        const { rows } = await this.pool.query('SELECT * FROM owner_settings WHERE owner_discord_id = $1', [ownerDiscordId]);
+        if (!rows[0]) return null;
+        const r = rows[0];
+        return {
+            ownerDiscordId: r.owner_discord_id,
+            creatorCode: r.creator_code ?? undefined,
+            status: r.status ?? undefined,
+            joinMsg: r.join_msg ?? undefined,
+            addMsg: r.add_msg ?? undefined,
+        };
+    }
+
+    public async getAllOwnerSettings(): Promise<OwnerSettings[]> {
+        const { rows } = await this.pool.query('SELECT * FROM owner_settings');
+        return rows.map(r => ({
+            ownerDiscordId: r.owner_discord_id,
+            creatorCode: r.creator_code ?? undefined,
+            status: r.status ?? undefined,
+            joinMsg: r.join_msg ?? undefined,
+            addMsg: r.add_msg ?? undefined,
+        }));
+    }
+
+    public async saveOwnerSettings(s: OwnerSettings): Promise<void> {
+        await this.pool.query(
+            `INSERT INTO owner_settings (owner_discord_id, creator_code, status, join_msg, add_msg, updated_at)
+             VALUES ($1, $2, $3, $4, $5, now())
+             ON CONFLICT (owner_discord_id) DO UPDATE SET
+                 creator_code = EXCLUDED.creator_code,
+                 status = EXCLUDED.status,
+                 join_msg = EXCLUDED.join_msg,
+                 add_msg = EXCLUDED.add_msg,
+                 updated_at = now()`,
+            [s.ownerDiscordId, s.creatorCode ?? null, s.status ?? null, s.joinMsg ?? null, s.addMsg ?? null]
+        );
     }
 
     // --- PREMIUM ---
 
     /** True si l'utilisateur a un premium actif (pas d'expiration, ou expiration future). */
-    public isPremium(discordId: string): boolean {
-        const row = this.db
-            .prepare('SELECT expires_at FROM premium WHERE discord_id = ?')
-            .get(discordId) as { expires_at: string | null } | undefined;
-        if (!row) return false;
-        if (row.expires_at) {
-            const t = Date.parse(row.expires_at);
+    public async isPremium(discordId: string): Promise<boolean> {
+        const { rows } = await this.pool.query('SELECT expires_at FROM premium WHERE discord_id = $1', [discordId]);
+        if (!rows[0]) return false;
+        if (rows[0].expires_at) {
+            const t = Date.parse(rows[0].expires_at);
             if (!Number.isNaN(t) && t < Date.now()) return false;
         }
         return true;
     }
 
     /** Accorde/renouvelle le premium. source: 'discord' | 'manual' | 'external'. */
-    public grantPremium(discordId: string, source: string, expiresAt: string | null = null): void {
-        this.db.prepare(`
-            INSERT INTO premium (discord_id, source, granted_at, expires_at)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(discord_id) DO UPDATE SET
-                source = excluded.source,
-                granted_at = excluded.granted_at,
-                expires_at = excluded.expires_at
-        `).run(discordId, source, new Date().toISOString(), expiresAt);
+    public async grantPremium(discordId: string, source: string, expiresAt: string | null = null): Promise<void> {
+        await this.pool.query(
+            `INSERT INTO premium (discord_id, source, granted_at, expires_at)
+             VALUES ($1, $2, $3, $4)
+             ON CONFLICT (discord_id) DO UPDATE SET
+                 source = EXCLUDED.source,
+                 granted_at = EXCLUDED.granted_at,
+                 expires_at = EXCLUDED.expires_at`,
+            [discordId, source, new Date().toISOString(), expiresAt]
+        );
     }
 
-    public revokePremium(discordId: string): void {
-        this.db.prepare('DELETE FROM premium WHERE discord_id = ?').run(discordId);
+    public async revokePremium(discordId: string): Promise<void> {
+        await this.pool.query('DELETE FROM premium WHERE discord_id = $1', [discordId]);
     }
 
     /** Détails de l'abonnement (ou null). Ne filtre pas l'expiration — voir isPremium(). */
-    public getPremium(discordId: string): { source: string; granted_at: string | null; expires_at: string | null } | null {
-        const row = this.db
-            .prepare('SELECT source, granted_at, expires_at FROM premium WHERE discord_id = ?')
-            .get(discordId) as { source: string; granted_at: string | null; expires_at: string | null } | undefined;
-        return row ?? null;
-    }
-
-    /** Tous les bots appartenant à cet utilisateur (flotte perso). */
-    public getBotsByOwner(discordId: string): BotAccount[] {
-        const rows = this.db
-            .prepare('SELECT * FROM epic_accounts WHERE owner_discord_id = ?')
-            .all(discordId) as any[];
-        return rows.map(row => ({
-            email: row.email,
-            pseudo: row.pseudo,
-            password: '',
-            ownerDiscordId: row.owner_discord_id,
-            deviceAuth: { deviceId: row.device_id, accountId: row.account_id, secret: row.secret_id }
-        }));
+    public async getPremium(discordId: string): Promise<{ source: string; granted_at: string | null; expires_at: string | null } | null> {
+        const { rows } = await this.pool.query('SELECT source, granted_at, expires_at FROM premium WHERE discord_id = $1', [discordId]);
+        return rows[0] ?? null;
     }
 
     // --- LOADOUT PRESETS ---
 
-    public savePreset(discordId: string, preset: Omit<LoadoutPreset, 'isActive'>): void {
-        this.db.prepare(`
-            INSERT INTO loadout_presets (discord_id, name, outfit, backpack, pickaxe, emote)
-            VALUES (@discord_id, @name, @outfit, @backpack, @pickaxe, @emote)
-            ON CONFLICT(discord_id, name) DO UPDATE SET
-                outfit = excluded.outfit, backpack = excluded.backpack,
-                pickaxe = excluded.pickaxe, emote = excluded.emote
-        `).run({
-            discord_id: discordId, name: preset.name,
-            outfit: preset.outfit ?? null, backpack: preset.backpack ?? null,
-            pickaxe: preset.pickaxe ?? null, emote: preset.emote ?? null
-        });
+    public async savePreset(discordId: string, preset: Omit<LoadoutPreset, 'isActive'>): Promise<void> {
+        await this.pool.query(
+            `INSERT INTO loadout_presets (discord_id, name, outfit, backpack, pickaxe, emote)
+             VALUES ($1, $2, $3, $4, $5, $6)
+             ON CONFLICT (discord_id, name) DO UPDATE SET
+                 outfit = EXCLUDED.outfit, backpack = EXCLUDED.backpack,
+                 pickaxe = EXCLUDED.pickaxe, emote = EXCLUDED.emote`,
+            [discordId, preset.name, preset.outfit ?? null, preset.backpack ?? null,
+             preset.pickaxe ?? null, preset.emote ?? null]
+        );
     }
 
-    public listPresets(discordId: string): LoadoutPreset[] {
-        const rows = this.db.prepare('SELECT * FROM loadout_presets WHERE discord_id = ? ORDER BY name').all(discordId) as any[];
+    public async listPresets(discordId: string): Promise<LoadoutPreset[]> {
+        const { rows } = await this.pool.query('SELECT * FROM loadout_presets WHERE discord_id = $1 ORDER BY name', [discordId]);
         return rows.map(r => ({
             name: r.name, outfit: r.outfit ?? undefined, backpack: r.backpack ?? undefined,
             pickaxe: r.pickaxe ?? undefined, emote: r.emote ?? undefined, isActive: r.is_active === 1
@@ -278,16 +300,19 @@ export class DatabaseManager {
     }
 
     /** Marque un preset comme actif (un seul actif par user). Renvoie false si introuvable. */
-    public setActivePreset(discordId: string, name: string): boolean {
-        const exists = this.db.prepare('SELECT 1 FROM loadout_presets WHERE discord_id = ? AND name = ?').get(discordId, name);
-        if (!exists) return false;
-        this.db.prepare('UPDATE loadout_presets SET is_active = 0 WHERE discord_id = ?').run(discordId);
-        this.db.prepare('UPDATE loadout_presets SET is_active = 1 WHERE discord_id = ? AND name = ?').run(discordId, name);
-        return true;
+    public async setActivePreset(discordId: string, name: string): Promise<boolean> {
+        return await this.withTransaction(async (client) => {
+            const exists = await client.query('SELECT 1 FROM loadout_presets WHERE discord_id = $1 AND name = $2', [discordId, name]);
+            if (exists.rowCount === 0) return false;
+            await client.query('UPDATE loadout_presets SET is_active = 0 WHERE discord_id = $1', [discordId]);
+            await client.query('UPDATE loadout_presets SET is_active = 1 WHERE discord_id = $1 AND name = $2', [discordId, name]);
+            return true;
+        });
     }
 
-    public getActivePreset(discordId: string): LoadoutPreset | null {
-        const r = this.db.prepare('SELECT * FROM loadout_presets WHERE discord_id = ? AND is_active = 1').get(discordId) as any;
+    public async getActivePreset(discordId: string): Promise<LoadoutPreset | null> {
+        const { rows } = await this.pool.query('SELECT * FROM loadout_presets WHERE discord_id = $1 AND is_active = 1', [discordId]);
+        const r = rows[0];
         if (!r) return null;
         return {
             name: r.name, outfit: r.outfit ?? undefined, backpack: r.backpack ?? undefined,
@@ -298,20 +323,19 @@ export class DatabaseManager {
     // --- USER MANAGEMENT ---
 
     public async saveUser(discordId: string, pseudo: string, deviceAuth: any): Promise<void> {
-        this.db.prepare(`
-            INSERT INTO users (discord_id, epic_pseudo, device_id, account_id, secret)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(discord_id) DO UPDATE SET
-                epic_pseudo = excluded.epic_pseudo,
-                device_id = excluded.device_id,
-                account_id = excluded.account_id,
-                secret = excluded.secret
-        `).run(discordId, pseudo, deviceAuth.deviceId, deviceAuth.accountId, deviceAuth.secret);
+        await this.pool.query(
+            `INSERT INTO users (discord_id, epic_pseudo, device_id, account_id, secret)
+             VALUES ($1, $2, $3, $4, $5)
+             ON CONFLICT (discord_id) DO UPDATE SET
+                 epic_pseudo = EXCLUDED.epic_pseudo,
+                 device_id = EXCLUDED.device_id,
+                 account_id = EXCLUDED.account_id,
+                 secret = EXCLUDED.secret`,
+            [discordId, pseudo, deviceAuth.deviceId, deviceAuth.accountId, deviceAuth.secret]
+        );
     }
 
-    public async getUser(discordId: string): Promise<any | null> {
-        const row = this.db.prepare('SELECT * FROM users WHERE discord_id = ?').get(discordId) as any;
-        if (!row) return null;
+    private rowToUser(row: any): any {
         return {
             discordId: row.discord_id,
             pseudo: row.epic_pseudo,
@@ -324,44 +348,42 @@ export class DatabaseManager {
         };
     }
 
+    public async getUser(discordId: string): Promise<any | null> {
+        const { rows } = await this.pool.query('SELECT * FROM users WHERE discord_id = $1', [discordId]);
+        return rows[0] ? this.rowToUser(rows[0]) : null;
+    }
+
     public async getAllUsers(): Promise<any[]> {
-        const rows = this.db.prepare('SELECT * FROM users WHERE secret IS NOT NULL').all() as any[];
-        return rows.map(row => ({
-            discordId: row.discord_id,
-            pseudo: row.epic_pseudo,
-            language: row.language || 'en',
-            deviceAuth: {
-                deviceId: row.device_id,
-                accountId: row.account_id,
-                secret: row.secret
-            }
-        }));
+        const { rows } = await this.pool.query('SELECT * FROM users WHERE secret IS NOT NULL');
+        return rows.map(r => this.rowToUser(r));
     }
 
     public async deleteUser(discordId: string): Promise<void> {
-        this.db.prepare('DELETE FROM users WHERE discord_id = ?').run(discordId);
+        await this.pool.query('DELETE FROM users WHERE discord_id = $1', [discordId]);
     }
 
     public async setLanguage(discordId: string, lang: string): Promise<void> {
-        this.db.prepare(`
-            INSERT INTO users (discord_id, language)
-            VALUES (?, ?)
-            ON CONFLICT(discord_id) DO UPDATE SET language = excluded.language
-        `).run(discordId, lang);
+        await this.pool.query(
+            `INSERT INTO users (discord_id, language) VALUES ($1, $2)
+             ON CONFLICT (discord_id) DO UPDATE SET language = EXCLUDED.language`,
+            [discordId, lang]
+        );
     }
 
     public async getLanguage(discordId: string): Promise<string> {
-        const row = this.db.prepare('SELECT language FROM users WHERE discord_id = ?').get(discordId) as any;
-        return row?.language || 'en';
+        const { rows } = await this.pool.query('SELECT language FROM users WHERE discord_id = $1', [discordId]);
+        return rows[0]?.language || 'en';
     }
 
     // --- BACKUP / RESTORE (dump brut des deux tables, pour ne rien perdre en cas de migration/incident) ---
 
     public async exportRaw(): Promise<{ exported_at: string; epic_accounts: any[]; users: any[] }> {
+        const accounts = await this.pool.query('SELECT * FROM epic_accounts ORDER BY id');
+        const users = await this.pool.query('SELECT * FROM users');
         return {
             exported_at: new Date().toISOString(),
-            epic_accounts: this.db.prepare('SELECT * FROM epic_accounts').all(),
-            users: this.db.prepare('SELECT * FROM users').all(),
+            epic_accounts: accounts.rows,
+            users: users.rows,
         };
     }
 
@@ -373,55 +395,43 @@ export class DatabaseManager {
         let bots = 0;
         let users = 0;
 
-        const upsertBot = this.db.prepare(`
-            INSERT INTO epic_accounts (email, pseudo, password_enc, secret_id, device_id, account_id, is_active, owner_discord_id)
-            VALUES (@email, @pseudo, @password_enc, @secret_id, @device_id, @account_id, @is_active, @owner_discord_id)
-            ON CONFLICT(email) DO UPDATE SET
-                pseudo = excluded.pseudo,
-                password_enc = excluded.password_enc,
-                secret_id = excluded.secret_id,
-                device_id = excluded.device_id,
-                account_id = excluded.account_id,
-                is_active = excluded.is_active,
-                owner_discord_id = excluded.owner_discord_id
-        `);
-        for (const row of dump.epic_accounts || []) {
-            if (!row.email) continue;
-            upsertBot.run({
-                email: row.email,
-                pseudo: row.pseudo ?? null,
-                password_enc: row.password_enc ?? null,
-                secret_id: row.secret_id ?? null,
-                device_id: row.device_id ?? null,
-                account_id: row.account_id ?? null,
-                is_active: row.is_active ?? 1,
-                owner_discord_id: row.owner_discord_id ?? null,
-            });
-            bots++;
-        }
+        await this.withTransaction(async (client) => {
+            for (const row of dump.epic_accounts || []) {
+                if (!row.email) continue;
+                await client.query(
+                    `INSERT INTO epic_accounts (email, pseudo, password_enc, secret_id, device_id, account_id, is_active, owner_discord_id)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+                     ON CONFLICT (email) DO UPDATE SET
+                         pseudo = EXCLUDED.pseudo,
+                         password_enc = EXCLUDED.password_enc,
+                         secret_id = EXCLUDED.secret_id,
+                         device_id = EXCLUDED.device_id,
+                         account_id = EXCLUDED.account_id,
+                         is_active = EXCLUDED.is_active,
+                         owner_discord_id = EXCLUDED.owner_discord_id`,
+                    [row.email, row.pseudo ?? null, row.password_enc ?? null, row.secret_id ?? null,
+                     row.device_id ?? null, row.account_id ?? null, row.is_active ?? 1, row.owner_discord_id ?? null]
+                );
+                bots++;
+            }
 
-        const upsertUser = this.db.prepare(`
-            INSERT INTO users (discord_id, epic_pseudo, device_id, account_id, secret, language)
-            VALUES (@discord_id, @epic_pseudo, @device_id, @account_id, @secret, @language)
-            ON CONFLICT(discord_id) DO UPDATE SET
-                epic_pseudo = excluded.epic_pseudo,
-                device_id = excluded.device_id,
-                account_id = excluded.account_id,
-                secret = excluded.secret,
-                language = excluded.language
-        `);
-        for (const row of dump.users || []) {
-            if (!row.discord_id) continue;
-            upsertUser.run({
-                discord_id: row.discord_id,
-                epic_pseudo: row.epic_pseudo ?? null,
-                device_id: row.device_id ?? null,
-                account_id: row.account_id ?? null,
-                secret: row.secret ?? null,
-                language: row.language ?? 'en',
-            });
-            users++;
-        }
+            for (const row of dump.users || []) {
+                if (!row.discord_id) continue;
+                await client.query(
+                    `INSERT INTO users (discord_id, epic_pseudo, device_id, account_id, secret, language)
+                     VALUES ($1, $2, $3, $4, $5, $6)
+                     ON CONFLICT (discord_id) DO UPDATE SET
+                         epic_pseudo = EXCLUDED.epic_pseudo,
+                         device_id = EXCLUDED.device_id,
+                         account_id = EXCLUDED.account_id,
+                         secret = EXCLUDED.secret,
+                         language = EXCLUDED.language`,
+                    [row.discord_id, row.epic_pseudo ?? null, row.device_id ?? null,
+                     row.account_id ?? null, row.secret ?? null, row.language ?? 'en']
+                );
+                users++;
+            }
+        });
 
         return { bots, users };
     }

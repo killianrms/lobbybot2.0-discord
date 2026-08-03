@@ -1,9 +1,11 @@
 import { SlashCommandBuilder, ChatInputCommandInteraction } from 'discord.js';
 import axios from 'axios';
 import { Command, CommandContext } from './Command';
+import { fernetEncrypt, hasMasterKey } from '../utils/Fernet';
 
 // Charger les IDs admin depuis .env (séparés par des virgules)
-const ADMIN_IDS = process.env.ADMIN_IDS?.split(',').map(id => id.trim()) || ['335755692134891520'];
+// Les admins vivent dans la table `admins` (Postgres) ; ADMIN_IDS du .env
+// reste un fallback de secours géré par DatabaseManager.getAdminIds().
 
 export const AdminCommand: Command = {
     data: new SlashCommandBuilder()
@@ -12,13 +14,13 @@ export const AdminCommand: Command = {
         .addSubcommand(subcommand =>
             subcommand
                 .setName('addbot')
-                .setDescription('Ajouter un nouveau bot Fortnite')
-                .addStringOption(option => option.setName('pseudo').setDescription('Pseudo').setRequired(true))
-                .addStringOption(option => option.setName('email').setDescription('Email').setRequired(true))
-                .addStringOption(option => option.setName('password').setDescription('Mot de passe').setRequired(true))
-                .addStringOption(option => option.setName('device_id').setDescription('Device ID').setRequired(true))
-                .addStringOption(option => option.setName('account_id').setDescription('Account ID').setRequired(true))
-                .addStringOption(option => option.setName('secret').setDescription('Secret').setRequired(true))
+                .setDescription('Importer des bots depuis un fichier JSON du générateur (upsert, owner = toi)')
+                .addAttachmentOption(option => option.setName('fichier').setDescription('accounts.json exporté par le générateur (ou un objet unique)').setRequired(true))
+        )
+        .addSubcommand(subcommand =>
+            subcommand
+                .setName('mybots')
+                .setDescription('Liste uniquement TES bots (owner = toi), contrairement à /listbots qui montre tout')
         )
         .addSubcommand(subcommand =>
             subcommand
@@ -64,7 +66,7 @@ export const AdminCommand: Command = {
 
     async execute(interaction: ChatInputCommandInteraction, context: CommandContext, userLang: string) {
         // Vérification admin
-        if (!ADMIN_IDS.includes(interaction.user.id)) {
+        if (!(await context.dbManager.isAdmin(interaction.user.id))) {
             console.warn(`[Security] Unauthorized admin attempt from ${interaction.user.tag} (${interaction.user.id})`);
             await interaction.reply({
                 content: '🔒 Vous n\'avez pas la permission d\'utiliser cette commande.',
@@ -78,25 +80,86 @@ export const AdminCommand: Command = {
         if (subcommand === 'addbot') {
             await interaction.deferReply({ ephemeral: true });
 
-            const newBot = {
-                pseudo: interaction.options.getString('pseudo', true),
-                email: interaction.options.getString('email', true),
-                password: interaction.options.getString('password', true),
-                deviceAuth: {
-                    deviceId: interaction.options.getString('device_id', true),
-                    accountId: interaction.options.getString('account_id', true),
-                    secret: interaction.options.getString('secret', true)
-                }
-            };
+            const attachment = interaction.options.getAttachment('fichier', true);
+            if (attachment.size > 5 * 1024 * 1024) {
+                await interaction.editReply('❌ Fichier trop volumineux (max 5 Mo).');
+                return;
+            }
 
             try {
-                console.log(`[Admin] ${interaction.user.tag} adding bot: ${newBot.pseudo}`);
-                await context.botManager.addNewBot(newBot);
-                await interaction.editReply(`✅ Bot **${newBot.pseudo}** ajouté et lancé avec succès !`);
-                console.log(`[Admin] ✅ Bot ${newBot.pseudo} added successfully`);
+                const response = await axios.get(attachment.url, { responseType: 'json', timeout: 15_000 });
+                // Format du générateur : tableau d'objets {email, password, pseudo,
+                // device_auth:{device_id, account_id, secret_id}} — un objet seul est toléré.
+                const raw = Array.isArray(response.data) ? response.data : [response.data];
+
+                const entries: Array<{ email: string; pseudo?: string; password_enc?: string; deviceId?: string; accountId?: string; secret?: string }> = [];
+                const rejected: string[] = [];
+                for (const item of raw) {
+                    const da = item?.device_auth ?? item?.deviceAuth ?? {};
+                    const deviceId = da.device_id ?? da.deviceId;
+                    const accountId = da.account_id ?? da.accountId;
+                    const secret = da.secret_id ?? da.secret;
+                    if (!item?.email || !deviceId || !accountId || !secret) {
+                        rejected.push(item?.email || item?.pseudo || '(entrée sans email)');
+                        continue;
+                    }
+                    entries.push({
+                        email: item.email,
+                        pseudo: item.pseudo ?? item.display_name ?? null,
+                        // Mot de passe : chiffré Fernet comme le fait le générateur (même clé)
+                        password_enc: item.password ? (fernetEncrypt(item.password) ?? undefined) : undefined,
+                        deviceId, accountId, secret,
+                    });
+                }
+
+                if (entries.length === 0) {
+                    await interaction.editReply(`❌ Aucune entrée valide dans le fichier (${rejected.length} rejetée(s) — device auth incomplet ?).`);
+                    return;
+                }
+
+                console.log(`[Admin] ${interaction.user.tag} importe ${entries.length} bot(s) via JSON`);
+                const { inserted, updated } = await context.dbManager.importBots(entries, interaction.user.id);
+                const launched = await context.botManager.syncFromDB();
+
+                const lines = [
+                    `✅ Import terminé : **${inserted}** créé(s), **${updated}** mis à jour (owner : <@${interaction.user.id}>).`,
+                    `🚀 ${launched} bot(s) lancé(s) immédiatement.`,
+                ];
+                if (rejected.length > 0) lines.push(`⚠️ ${rejected.length} entrée(s) ignorée(s) : ${rejected.slice(0, 10).join(', ')}${rejected.length > 10 ? '…' : ''}`);
+                if (entries.some(e => e.password_enc === undefined) && !hasMasterKey()) {
+                    lines.push('⚠️ EPIC_MASTER_KEY absente : mots de passe non stockés (device auth importés quand même).');
+                }
+                await interaction.editReply(lines.join('\n'));
             } catch (e: any) {
-                console.error(`[Admin] ❌ Failed to add bot ${newBot.pseudo}:`, e.message);
-                await interaction.editReply(`❌ Erreur lors de l'ajout du bot: ${e.message}`);
+                console.error('[Admin] ❌ Import JSON échoué:', e.message);
+                await interaction.editReply(`❌ Erreur lors de l'import : ${e.message}`);
+            }
+        } else if (subcommand === 'mybots') {
+            await interaction.deferReply({ ephemeral: true });
+
+            try {
+                const owned = await context.dbManager.getBotsByOwner(interaction.user.id);
+                if (owned.length === 0) {
+                    await interaction.editReply('ℹ️ Aucun bot ne t\'appartient (owner_discord_id). Importe avec `/admin addbot` ou crée avec `/createbot`.');
+                    return;
+                }
+                const online = new Set(
+                    context.botManager.getActiveBots().filter((b: any) => b.isConnected).map((b: any) => b.account.email)
+                );
+                const lines = owned.slice(0, 40).map(b =>
+                    `${online.has(b.email) ? '🟢' : '⚫'} **${b.pseudo || b.email}** — \`${b.email}\``
+                );
+                if (owned.length > 40) lines.push(`… et ${owned.length - 40} autre(s)`);
+                await interaction.editReply({
+                    embeds: [{
+                        title: `🤖 Tes bots (${owned.length})`,
+                        description: lines.join('\n'),
+                        color: 0x0099ff,
+                        footer: { text: '🟢 connecté · ⚫ hors ligne — /listbots montre toute la flotte' },
+                    }]
+                });
+            } catch (e: any) {
+                await interaction.editReply(`❌ Erreur : ${e.message}`);
             }
         } else if (subcommand === 'sac-all') {
             await interaction.deferReply({ ephemeral: true });
@@ -239,13 +302,13 @@ export const AdminCommand: Command = {
             const target = interaction.options.getUser('user', true);
             const action = interaction.options.getString('action', true);
             if (action === 'revoke') {
-                context.dbManager.revokePremium(target.id);
+                await context.dbManager.revokePremium(target.id);
                 await interaction.editReply(`✅ Premium retiré à ${target.tag}.`);
                 return;
             }
             const jours = interaction.options.getInteger('jours');
             const expiresAt = jours ? new Date(Date.now() + jours * 86400_000).toISOString() : null;
-            context.dbManager.grantPremium(target.id, 'manual', expiresAt);
+            await context.dbManager.grantPremium(target.id, 'manual', expiresAt);
             await interaction.editReply({
                 content: `✅ Premium accordé à ${target.tag}${jours ? ` pour ${jours} jour(s)` : ' (illimité)'}.`
             });

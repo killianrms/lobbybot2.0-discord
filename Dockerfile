@@ -11,6 +11,7 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN python3 -m venv /opt/genv \
     && /opt/genv/bin/pip install --no-cache-dir \
         "playwright>=1.40.0" requests beautifulsoup4 pyperclip colorama cryptography \
+        psycopg2-binary python-dotenv \
     && /opt/genv/bin/playwright install --with-deps chromium \
     && rm -rf /var/lib/apt/lists/*
 

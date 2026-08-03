@@ -13,7 +13,7 @@ export const EmoteAllCommand: Command = {
             option.setName('nom').setDescription('Nom de l\'emote/danse').setRequired(true)),
 
     async execute(interaction: ChatInputCommandInteraction, context: CommandContext, userLang: string) {
-        if (!requirePremium(interaction, context.dbManager)) return;
+        if (!(await requirePremium(interaction, context.dbManager))) return;
         await interaction.deferReply({ ephemeral: true });
 
         const query = interaction.options.getString('nom', true);

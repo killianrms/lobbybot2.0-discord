@@ -24,9 +24,9 @@ export const CreateBotCommand: Command = {
             return;
         }
 
-        const isPremium = context.dbManager.isPremium(interaction.user.id);
+        const isPremium = await context.dbManager.isPremium(interaction.user.id);
         const quota = botQuotaFor(isPremium);
-        const owned = context.dbManager.getBotsByOwner(interaction.user.id);
+        const owned = await context.dbManager.getBotsByOwner(interaction.user.id);
         if (owned.length >= quota) {
             // C'est LE moment où un utilisateur gratuit a envie de payer : bouton d'achat direct.
             const row = !isPremium ? premiumButtonRow() : null;

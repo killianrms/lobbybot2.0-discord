@@ -35,10 +35,15 @@ export class BotManager {
     private exclusiveIdleMs: number = Math.max(1, parseInt(process.env.EXCLUSIVE_IDLE_MINUTES || '5', 10)) * 60_000;
     private idleTimers: Map<string, NodeJS.Timeout> = new Map();
 
-    // Global config (managed from admin dashboard)
+    // Global config (managed from admin dashboard) — sert de DÉFAUT pour les
+    // owners qui n'ont pas de réglages propres dans owner_settings.
     public globalStatus: string = 'USE CODE CREATOR: aeroz';
     public joinMsg: string = 'Join my Discord: https://discord.gg/SarmtBh3Gu';
     public addMsg: string = 'Thanks for adding me! Use creator code "aeroz" and join our Discord: https://discord.gg/SarmtBh3Gu';
+
+    // Réglages par propriétaire (owner_settings) : chaque bot applique le
+    // status/joinMsg/addMsg de SON owner, avec la config globale en fallback.
+    private ownerSettings: Map<string, import('./DatabaseManager').OwnerSettings> = new Map();
 
     // Actions
     private partyActions: PartyActions;
@@ -129,9 +134,11 @@ export class BotManager {
         // setStatus() — y compris les appels internes de fnbr sur les événements
         // de party — d'un envoi de présence EOS.
         const originalSetStatus = bot.setStatus.bind(bot);
+        // fnbr >= 4.2 n'a plus le 3e paramètre "friend" (envoi XMPP ciblé) :
+        // la présence par ami passe uniquement par EOS désormais. On tolère
+        // encore l'argument pour les appelants historiques, sans le transmettre.
         (bot as any).setStatus = (status?: any, onlineType?: any, friend?: any) => {
-            const result = originalSetStatus(status, onlineType, friend);
-            // Un envoi ciblé à un seul ami (3e argument) ne change pas la présence globale
+            const result = originalSetStatus(status, onlineType);
             if (!friend) this.scheduleEOSPresence(bot, account);
             return result;
         };
@@ -163,9 +170,10 @@ export class BotManager {
         bot.on('ready', async () => {
             try {
                 await bot.user?.fetchSelf();
-                bot.setStatus(this.globalStatus);
+                const cfg = this.cfgFor(account);
+                bot.setStatus(cfg.status);
                 console.log(`[${identifier}] ✅ Bot connecté en tant que ${bot.user?.self?.displayName || 'Unknown'}`);
-                console.log(`[${identifier}] 🎮 Status défini : "${this.globalStatus}"`);
+                console.log(`[${identifier}] 🎮 Status défini : "${cfg.status}"`);
             } catch (error: any) {
                 console.error(`[${identifier}] ❌ Erreur ready:`, error.message);
             }
@@ -176,21 +184,22 @@ export class BotManager {
             try {
                 await pendingFriend.accept();
                 console.log(`[${identifier}] 🤝 Demande d'ami acceptée de: ${pendingFriend.displayName}`);
-                // Repousser le statut directement au nouvel ami : le broadcast de présence
-                // envoyé au moment du "ready" ne couvre que le roster déjà présent à cet
-                // instant-là, donc un ami ajouté après continue de voir "In the launcher"
-                // (aucune présence Fortnite jamais reçue pour lui) tant qu'on ne lui pousse
-                // pas un statut explicite maintenant que la relation d'amitié existe.
+                // Repousser la présence après l'ajout : le broadcast du "ready" ne
+                // couvre que le roster présent à cet instant-là, donc un ami ajouté
+                // après verrait "In the launcher". fnbr >= 4.2 n'a plus d'envoi XMPP
+                // ciblé par ami — un setStatus global re-déclenche la présence EOS,
+                // qui est ce que le client Fortnite lit réellement.
                 try {
-                    bot.setStatus(this.globalStatus, undefined, pendingFriend.id);
+                    bot.setStatus(this.cfgFor(account).status);
                 } catch (e) {}
                 // Envoyer le message d'ajout si configuré.
                 // PendingFriend n'a PAS de sendMessage() dans fnbr 4 (seul Friend l'a) :
                 // on passe par le whisper EOS direct qui n'exige pas que la friend list
                 // locale soit déjà rafraîchie après l'accept.
-                if (this.addMsg) {
+                const addMsg = this.cfgFor(account).addMsg;
+                if (addMsg) {
                     try {
-                        await SecureChat.whisper(bot, pendingFriend.id, this.addMsg);
+                        await SecureChat.whisper(bot, pendingFriend.id, addMsg);
                         console.log(`[${identifier}] 💬 Message d'ajout envoyé à ${pendingFriend.displayName}`);
                     } catch (e: any) {
                         console.error(`[${identifier}] ❌ Échec message d'ajout à ${pendingFriend.displayName}: ${e.message}`);
@@ -235,9 +244,9 @@ export class BotManager {
                 }
             }
             // Envoyer le message de lobby si configuré
-            if (this.joinMsg) {
+            if (this.cfgFor(account).joinMsg) {
                 try {
-                    await SecureChat.sendPartyMessage(bot, this.joinMsg);
+                    await SecureChat.sendPartyMessage(bot, this.cfgFor(account).joinMsg);
                     console.log(`[${identifier}] 💬 Message de lobby envoyé`);
                 } catch (e: any) {
                     console.error(`[${identifier}] ❌ Échec message de lobby: ${e.message}`);
@@ -274,9 +283,9 @@ export class BotManager {
                 ModernParty.clearMimic(bot);
                 console.log(`[${identifier}] 🎭 Mimic stoppé (départ de ${member.displayName})`);
             }
-            if (this.joinMsg) {
+            if (this.cfgFor(account).joinMsg) {
                 try {
-                    await SecureChat.sendPartyMessage(bot, this.joinMsg);
+                    await SecureChat.sendPartyMessage(bot, this.cfgFor(account).joinMsg);
                     console.log(`[${identifier}] 💬 Rappel lobby envoyé (départ de ${member.displayName})`);
                 } catch (e: any) {
                     console.error(`[${identifier}] ❌ Échec rappel lobby: ${e.message}`);
@@ -600,17 +609,24 @@ export class BotManager {
         console.log(`\n✅ Tous les bots sont lancés! (${this.bots.size} bot(s) actifs)`);
     }
 
+    /** Lance tous les bots présents en BD mais pas encore démarrés. Retourne le nombre lancé. */
+    public async syncFromDB(): Promise<number> {
+        let launched = 0;
+        const accounts = await this.dbManager.getAllBots();
+        for (const account of accounts) {
+            if (!this.bots.has(account.email) && !this.failedBots.has(account.email)) {
+                console.log(`[BotManager] 🆕 Nouveau bot détecté en BD: ${account.pseudo || account.email}`);
+                if (await this.launchBot(account)) launched++;
+            }
+        }
+        return launched;
+    }
+
     public startDBSync(intervalMs: number = 300_000): void {
         console.log(`[BotManager] 🔁 Synchronisation BD toutes les ${intervalMs / 1000}s`);
         setInterval(async () => {
             try {
-                const accounts = await this.dbManager.getAllBots();
-                for (const account of accounts) {
-                    if (!this.bots.has(account.email) && !this.failedBots.has(account.email)) {
-                        console.log(`[BotManager] 🆕 Nouveau bot détecté en BD: ${account.pseudo || account.email}`);
-                        await this.launchBot(account);
-                    }
-                }
+                await this.syncFromDB();
             } catch (e: any) {
                 console.error('[BotManager] ❌ Erreur sync BD:', e.message);
                 sendAlert('db-sync-error', '🔴 Erreur de synchronisation BD', `\`\`\`${e.message}\`\`\``, 'critical');
@@ -747,7 +763,7 @@ export class BotManager {
 
     /** Joue la même emote (par id de cosmétique) sur tous les bots perso connectés de l'utilisateur. */
     async emoteAllOwned(discordId: string, emoteId: string): Promise<number> {
-        const owned = this.dbManager.getBotsByOwner(discordId).map(b => b.pseudo);
+        const owned = (await this.dbManager.getBotsByOwner(discordId)).map(b => b.pseudo);
         const bots = this.getActiveBots().filter(b => b.isConnected && b.client && owned.includes(b.account.pseudo));
         let count = 0;
         for (const b of bots) {
@@ -763,7 +779,7 @@ export class BotManager {
 
     /** Applique un preset de loadout à tous les bots perso connectés de l'utilisateur. */
     async applyLoadoutToOwned(discordId: string, preset: import('./DatabaseManager').LoadoutPreset): Promise<number> {
-        const owned = this.dbManager.getBotsByOwner(discordId).map(b => b.pseudo);
+        const owned = (await this.dbManager.getBotsByOwner(discordId)).map(b => b.pseudo);
         const bots = this.getActiveBots().filter(b => b.isConnected && b.client && owned.includes(b.account.pseudo));
         let count = 0;
         for (const b of bots) {
@@ -861,6 +877,32 @@ export class BotManager {
         return removed;
     }
 
+    /** Config effective d'un bot : réglages de son owner, sinon config globale. */
+    public cfgFor(account: BotAccount): { status: string; joinMsg: string; addMsg: string } {
+        const s = account.ownerDiscordId ? this.ownerSettings.get(account.ownerDiscordId) : undefined;
+        return {
+            status: s?.status ?? this.globalStatus,
+            joinMsg: s?.joinMsg ?? this.joinMsg,
+            addMsg: s?.addMsg ?? this.addMsg,
+        };
+    }
+
+    /** (Re)charge owner_settings depuis la base et réapplique les statuts. */
+    public async refreshOwnerSettings(): Promise<void> {
+        try {
+            const all = await this.dbManager.getAllOwnerSettings();
+            this.ownerSettings = new Map(all.map(s => [s.ownerDiscordId, s]));
+            for (const instance of this.bots.values()) {
+                if (instance.isConnected && instance.client) {
+                    try { instance.client.setStatus(this.cfgFor(instance.account).status); } catch (e) {}
+                }
+            }
+            console.log(`[BotManager] ⚙️ owner_settings chargés (${all.length} owner(s))`);
+        } catch (e: any) {
+            console.error('[BotManager] refreshOwnerSettings:', e.message);
+        }
+    }
+
     /**
      * Apply global config to all connected bots immediately.
      */
@@ -874,8 +916,9 @@ export class BotManager {
             for (const instance of this.bots.values()) {
                 if (instance.isConnected && instance.client) {
                     try {
-                        instance.client.setStatus(this.globalStatus);
-                        console.log(`[${instance.account.pseudo}] 🎮 Status mis à jour: "${this.globalStatus}"`);
+                        const st = this.cfgFor(instance.account).status;
+                        instance.client.setStatus(st);
+                        console.log(`[${instance.account.pseudo}] 🎮 Status mis à jour: "${st}"`);
                     } catch (e) {}
                 }
             }

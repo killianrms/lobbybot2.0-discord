@@ -16,7 +16,9 @@ export class BackupManager {
 
     constructor(dbManager: DatabaseManager) {
         this.dbManager = dbManager;
-        this.backupDir = path.join(path.dirname(dbManager.dbPath), 'backups');
+        // Avec Postgres il n'y a plus de fichier de base : le dossier vient de
+        // BACKUP_DIR ou retombe sur le volume data partagé.
+        this.backupDir = process.env.BACKUP_DIR || path.join('/app/data', 'backups');
         fs.mkdirSync(this.backupDir, { recursive: true });
     }
 

@@ -5,6 +5,33 @@
 #   ├── fn_account_generator/  (repo privé, transféré manuellement)
 #   └── data/                  (lobbybot.db partagée + backups/ — hors git)
 services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: lobbybot-postgres
+    restart: unless-stopped
+    shm_size: 128mb
+    environment:
+      POSTGRES_DB: lobbybot
+      # Secrets dans le .env de ce dossier (gitignoré) — substitution docker compose
+      POSTGRES_PASSWORD: ${POSTGRES_SUPER_PASSWORD:?à définir dans .env}
+      LOBBYBOT_DB_PASSWORD: ${LOBBYBOT_DB_PASSWORD:?à définir dans .env}
+      GENERATOR_DB_PASSWORD: ${GENERATOR_DB_PASSWORD:?à définir dans .env}
+    ports:
+      # localhost + IP Tailscale de la VM uniquement — jamais le LAN entier ni public.
+      # Le bind sur l'IP Tailscale exige net.ipv4.ip_nonlocal_bind=1 (voir
+      # /etc/sysctl.d/99-docker-tailscale-bind.conf sur la VM) pour survivre à un
+      # démarrage de Docker avant tailscaled.
+      - "127.0.0.1:5432:5432"
+      - "100.108.56.39:5432:5432"
+    volumes:
+      - ../data/postgres:/var/lib/postgresql/data
+      - ./postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d lobbybot"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   website:
     build: ../lobbybot2.0-website
     container_name: lobbybot-website
@@ -14,6 +41,9 @@ services:
     env_file: ../lobbybot2.0-website/.env
     volumes:
       - ../data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   manager:
     build: .

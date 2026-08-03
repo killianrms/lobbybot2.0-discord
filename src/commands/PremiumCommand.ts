@@ -10,14 +10,14 @@ export const PremiumCommand: Command = {
     async execute(interaction: ChatInputCommandInteraction, context: CommandContext, userLang: string) {
         const row = premiumButtonRow();
 
-        if (context.dbManager.isPremium(interaction.user.id)) {
-            const details = context.dbManager.getPremium(interaction.user.id);
+        if (await context.dbManager.isPremium(interaction.user.id)) {
+            const details = await context.dbManager.getPremium(interaction.user.id);
             let expires = 'permanent';
             if (details?.expires_at) {
                 const t = Date.parse(details.expires_at);
                 expires = Number.isNaN(t) ? details.expires_at : `<t:${Math.floor(t / 1000)}:D>`;
             }
-            const owned = context.dbManager.getBotsByOwner(interaction.user.id);
+            const owned = await context.dbManager.getBotsByOwner(interaction.user.id);
 
             const embed = new EmbedBuilder()
                 .setTitle('👑 LobbyBot Premium — actif')

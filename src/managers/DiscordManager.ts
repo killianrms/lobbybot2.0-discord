@@ -290,7 +290,7 @@ export class DiscordManager {
         this.client.on('entitlementCreate', async (ent: any) => {
             if (!ent.userId || !isOurSku(ent)) return;
             const expiresAt = ent.endsTimestamp ? new Date(ent.endsTimestamp).toISOString() : null;
-            this.dbManager.grantPremium(ent.userId, 'discord', expiresAt);
+            await this.dbManager.grantPremium(ent.userId, 'discord', expiresAt);
             await syncRole(ent.userId, true);
             console.log(`[Premium] ✅ Entitlement créé pour ${ent.userId}`);
         });
@@ -300,11 +300,11 @@ export class DiscordManager {
             const expiresAt = ent.endsTimestamp ? new Date(ent.endsTimestamp).toISOString() : null;
             // endsTimestamp dans le passé = abonnement terminé/annulé
             if (expiresAt && new Date(expiresAt).getTime() < Date.now()) {
-                this.dbManager.revokePremium(ent.userId);
+                await this.dbManager.revokePremium(ent.userId);
                 await syncRole(ent.userId, false);
                 console.log(`[Premium] ⏹️ Entitlement expiré pour ${ent.userId}`);
             } else {
-                this.dbManager.grantPremium(ent.userId, 'discord', expiresAt);
+                await this.dbManager.grantPremium(ent.userId, 'discord', expiresAt);
                 await syncRole(ent.userId, true);
                 console.log(`[Premium] 🔄 Entitlement renouvelé pour ${ent.userId}`);
             }
@@ -312,7 +312,7 @@ export class DiscordManager {
 
         this.client.on('entitlementDelete', async (ent: any) => {
             if (!ent.userId || !isOurSku(ent)) return;
-            this.dbManager.revokePremium(ent.userId);
+            await this.dbManager.revokePremium(ent.userId);
             await syncRole(ent.userId, false);
             console.log(`[Premium] 🗑️ Entitlement supprimé pour ${ent.userId}`);
         });

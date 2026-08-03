@@ -110,6 +110,7 @@ export class SocketManager {
             accountId: string;
             deviceId: string;
             secret: string;
+            ownerDiscordId?: string; // posé par le website : l'admin qui ajoute
         }) => {
             console.log(`📥 Admin requested new bot: ${data.pseudo}`);
             try {
@@ -117,6 +118,7 @@ export class SocketManager {
                     pseudo: data.pseudo,
                     email: data.email,
                     password: data.password,
+                    ownerDiscordId: data.ownerDiscordId,
                     deviceAuth: {
                         accountId: data.accountId,
                         deviceId: data.deviceId,
@@ -141,6 +143,13 @@ export class SocketManager {
         this.socket.on('config:globalUpdate', (config: { status?: string; joinMsg?: string; addMsg?: string }) => {
             console.log('📥 Global config update from admin:', config);
             this.botManager.applyGlobalConfig(config);
+        });
+
+        // Un admin a modifié SES owner_settings sur le dashboard : recharger
+        // depuis la base et réappliquer les statuts des bots concernés.
+        this.socket.on('ownerSettings:changed', (info: { ownerId?: string }) => {
+            console.log(`📥 owner_settings modifiés (owner ${info?.ownerId || '?'}) — rechargement`);
+            this.botManager.refreshOwnerSettings();
         });
     }
 

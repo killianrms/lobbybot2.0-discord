@@ -20,12 +20,12 @@ export const PresetCommand: Command = {
         .addSubcommand(sc => sc.setName('list').setDescription('Liste tes presets')),
 
     async execute(interaction: ChatInputCommandInteraction, context: CommandContext, userLang: string) {
-        if (!requirePremium(interaction, context.dbManager)) return;
+        if (!(await requirePremium(interaction, context.dbManager))) return;
         const sub = interaction.options.getSubcommand();
         await interaction.deferReply({ ephemeral: true });
 
         if (sub === 'list') {
-            const presets = context.dbManager.listPresets(interaction.user.id);
+            const presets = await context.dbManager.listPresets(interaction.user.id);
             if (presets.length === 0) { await interaction.editReply('Aucun preset. Crée-en un avec `/preset save`.'); return; }
             await interaction.editReply('🎭 Tes presets :\n' + presets.map(p => `• **${p.name}**${p.isActive ? ' (actif)' : ''}`).join('\n'));
             return;
@@ -45,18 +45,18 @@ export const PresetCommand: Command = {
                 pickaxe: await resolve(interaction.options.getString('pioche'), 'pickaxe'),
                 emote: await resolve(interaction.options.getString('emote'), 'emote'),
             };
-            context.dbManager.savePreset(interaction.user.id, preset);
+            await context.dbManager.savePreset(interaction.user.id, preset);
             await interaction.editReply(`✅ Preset **${name}** enregistré. Applique-le avec \`/preset apply nom:${name}\`.`);
             return;
         }
 
         // apply
         const name = interaction.options.getString('nom', true);
-        if (!context.dbManager.setActivePreset(interaction.user.id, name)) {
+        if (!(await context.dbManager.setActivePreset(interaction.user.id, name))) {
             await interaction.editReply(`❌ Preset "${name}" introuvable.`);
             return;
         }
-        const preset = context.dbManager.getActivePreset(interaction.user.id)!;
+        const preset = (await context.dbManager.getActivePreset(interaction.user.id))!;
         const count = await context.botManager.applyLoadoutToOwned(interaction.user.id, preset);
         await interaction.editReply(
             count > 0

@@ -8,7 +8,7 @@ export const SquadCommand: Command = {
         .setDescription('[Premium] Fais rejoindre tes bots perso dans ton groupe Fortnite'),
 
     async execute(interaction: ChatInputCommandInteraction, context: CommandContext, userLang: string) {
-        if (!requirePremium(interaction, context.dbManager)) return;
+        if (!(await requirePremium(interaction, context.dbManager))) return;
 
         await interaction.deferReply({ ephemeral: true });
 
@@ -18,7 +18,7 @@ export const SquadCommand: Command = {
             return;
         }
 
-        const ownedBots = context.dbManager.getBotsByOwner(interaction.user.id);
+        const ownedBots = await context.dbManager.getBotsByOwner(interaction.user.id);
         if (ownedBots.length === 0) {
             await interaction.editReply('ℹ️ Tu n\'as pas encore de bot perso. Crée-en un avec `/createbot`.');
             return;
@@ -40,7 +40,7 @@ export const SquadCommand: Command = {
             await new Promise(r => setTimeout(r, 600)); // espacement anti rate-limit
         }
 
-        const activePreset = context.dbManager.getActivePreset(interaction.user.id);
+        const activePreset = await context.dbManager.getActivePreset(interaction.user.id);
         if (activePreset) {
             await context.botManager.applyLoadoutToOwned(interaction.user.id, activePreset);
         }

@@ -7,8 +7,8 @@ import { PREMIUM_SKU_ID, premiumButtonRow } from '../config/premium';
  * d'upsell (éphémère) et renvoie false. À appeler en tête d'une commande premium
  * AVANT tout deferReply.
  */
-export function requirePremium(interaction: ChatInputCommandInteraction, dbManager: DatabaseManager): boolean {
-    if (dbManager.isPremium(interaction.user.id)) return true;
+export async function requirePremium(interaction: ChatInputCommandInteraction, dbManager: DatabaseManager): Promise<boolean> {
+    if (await dbManager.isPremium(interaction.user.id)) return true;
 
     // Fallback : le flag DB peut avoir dérivé si le bot était offline quand
     // Discord a émis entitlementCreate. On vérifie les entitlements live de
@@ -22,7 +22,7 @@ export function requirePremium(interaction: ChatInputCommandInteraction, dbManag
         });
         if (active) {
             const endsTimestamp = (active as any).endsTimestamp as number | null | undefined;
-            dbManager.grantPremium(
+            await dbManager.grantPremium(
                 interaction.user.id,
                 'discord',
                 endsTimestamp ? new Date(endsTimestamp).toISOString() : null

@@ -1,4 +1,5 @@
 import * as io from 'socket.io-client';
+import axios from 'axios';
 import { BotManager } from './BotManager';
 import { BotAccount } from '../types';
 import { sendAlert } from '../utils/AlertManager';
@@ -10,6 +11,11 @@ export class SocketManager {
     private reconnectAttempts: number = 0;
     private maxReconnectAttempts: number = 10;
     private reconnectDelay: number = 5000;
+    // Latence vers l'API Epic, rafraîchie à chaque cycle d'update. Tous les
+    // bots tournent dans ce process : leur ping réseau est le même — une
+    // seule mesure partagée est donc exacte (l'ancien client.xmpp.ping
+    // n'existe plus dans fnbr 4 et renvoyait toujours null).
+    private lastEpicPingMs: number | null = null;
     private heartbeatInterval: any;
 
     constructor(botManager: BotManager, dashboardUrl: string) {
@@ -46,7 +52,7 @@ export class SocketManager {
         this.socket.on('connect', () => {
             console.log('✅ Manager Connected to Dashboard!');
             this.reconnectAttempts = 0;
-            this.sendLogin();
+            this.measureEpicPing().then(() => this.sendLogin());
             this.startHeartbeat();
         });
 
@@ -180,7 +186,7 @@ export class SocketManager {
                 name: b.account.pseudo,
                 friends,
                 isOnline: b.isConnected,
-                ping: b.client && b.client.xmpp && b.client.xmpp.ping ? b.client.xmpp.ping : null
+                ping: b.isConnected ? this.lastEpicPingMs : null
             };
         });
 
@@ -194,11 +200,26 @@ export class SocketManager {
 
     public startPeriodicUpdates(intervalMs: number = 30_000): void {
         console.log(`🔄 Periodic updates every ${intervalMs / 1000}s`);
-        setInterval(() => {
+        setInterval(async () => {
             if (this.socket.connected) {
+                await this.measureEpicPing();
                 this.sendLogin();
             }
         }, intervalMs);
+    }
+
+    /** Mesure la latence d'un endpoint public Epic (timeout 5 s → null). */
+    private async measureEpicPing(): Promise<void> {
+        try {
+            const t0 = Date.now();
+            await axios.get(
+                'https://account-public-service-prod.ol.epicgames.com/account/api/epicdomains/ssodomains',
+                { timeout: 5000 }
+            );
+            this.lastEpicPingMs = Date.now() - t0;
+        } catch {
+            this.lastEpicPingMs = null;
+        }
     }
 
     public sendAddRequest(target: string, discordUser: string): void {

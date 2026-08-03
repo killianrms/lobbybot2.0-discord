@@ -11,6 +11,13 @@ export const AdminCommand: Command = {
     data: new SlashCommandBuilder()
         .setName('admin')
         .setDescription('Commandes administrateur')
+        // Invisible pour les membres ordinaires : seuls les administrateurs du
+        // serveur la voient par défaut ; accordable à ton frère/neveu via
+        // Paramètres du serveur → Intégrations → LobbyBot → /admin.
+        // La vraie autorisation reste le contrôle en base (table admins) au début
+        // d'execute() — ceci ne fait que cacher la commande de l'UI.
+        .setDefaultMemberPermissions('0')
+        .setDMPermission(false)
         .addSubcommand(subcommand =>
             subcommand
                 .setName('addbot')

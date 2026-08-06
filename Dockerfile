@@ -26,6 +26,9 @@ RUN npm install
 
 COPY . .
 
+# Corrige un crash de fnbr sur les présences EOS incomplètes (voir le script)
+RUN node scripts/patch-fnbr.js
+
 RUN npm run build
 
 CMD ["node", "dist/index.js"]

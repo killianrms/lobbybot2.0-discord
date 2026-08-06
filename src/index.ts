@@ -17,7 +17,22 @@ process.on('uncaughtException', (err) => {
     sendAlert('uncaught-exception', '🔴 Exception non gérée', `\`\`\`${err.stack || err.message}\`\`\``, 'critical');
 });
 
+/**
+ * Erreurs internes à fnbr sur le flux de présence/STOMP d'Epic : payloads
+ * incomplets envoyés par Epic, sans conséquence (les bots restent connectés et
+ * se reconnectent seuls). On les garde en log local mais on n'alerte pas —
+ * sinon le webhook est noyé et les vraies alertes passent inaperçues.
+ */
+function isBenignFnbrNoise(reason: any): boolean {
+    const stack = String(reason?.stack || reason || '');
+    return /fnbr[/\\]dist[/\\]src[/\\](structures[/\\]friend[/\\]FriendPresence|stomp[/\\]STOMP)/.test(stack);
+}
+
 process.on('unhandledRejection', (reason: any) => {
+    if (isBenignFnbrNoise(reason)) {
+        console.warn('[fnbr] Présence/STOMP ignorée (payload Epic incomplet):', reason?.message || reason);
+        return;
+    }
     console.error('[FATAL] Unhandled Rejection:', reason);
     sendAlert('unhandled-rejection', '🔴 Promise rejetée non gérée', `\`\`\`${reason?.stack || String(reason)}\`\`\``, 'critical');
 });

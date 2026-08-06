@@ -4,11 +4,21 @@
 #   ├── lobbybot2.0-website/
 #   ├── fn_account_generator/  (repo privé, transféré manuellement)
 #   └── data/                  (lobbybot.db partagée + backups/ — hors git)
+# Logs bornés (10 Mo x 3 par conteneur) sur CHAQUE service : sans limite, un
+# conteneur en crash-loop remplit le disque (vécu : 19 Go de logs pm2 sur
+# l'ancien PC). C'est redondant avec /etc/docker/daemon.json, volontairement :
+# ce fichier-là n'est ni dans git ni dans les backups, une VM reconstruite le
+# perdrait — la limite doit voyager avec le dépôt.
 services:
   postgres:
     image: postgres:17-alpine
     container_name: lobbybot-postgres
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     shm_size: 128mb
     environment:
       POSTGRES_DB: lobbybot
@@ -36,6 +46,11 @@ services:
     build: ../lobbybot2.0-website
     container_name: lobbybot-website
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     ports:
       - "3000:3000"
     env_file: ../lobbybot2.0-website/.env
@@ -49,6 +64,11 @@ services:
     build: .
     container_name: lobbybot-manager
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     env_file: .env
     volumes:
       - ../data:/app/data
@@ -60,6 +80,11 @@ services:
     image: louislam/uptime-kuma:1
     container_name: uptime-kuma
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     ports:
       # local + Tailscale uniquement (tailscale serve proxifie vers 127.0.0.1)
       - "127.0.0.1:3001:3001"

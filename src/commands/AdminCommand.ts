@@ -296,6 +296,18 @@ export const AdminCommand: Command = {
                 await interaction.editReply(`❌ Erreur lors de la restauration: ${e.message}`);
             }
         } else if (subcommand === 'createbot') {
+            // Même verrou que /createbot (CREATEBOT_ENABLED) : la création de
+            // comptes passe par le générateur, actuellement bloqué par le défi
+            // Cloudflare depuis l'IP du serveur. Mieux vaut le dire que laisser
+            // la commande échouer après plusieurs minutes d'attente.
+            if (process.env.CREATEBOT_ENABLED !== 'true') {
+                await interaction.reply({
+                    content: '🚧 La création de comptes est désactivée pour le moment (le générateur est bloqué par Cloudflare depuis le serveur).',
+                    ephemeral: true,
+                });
+                return;
+            }
+
             const pseudoSuffix = interaction.options.getString('pseudo')?.trim() || undefined;
             const count = interaction.options.getInteger('count') || 1;
 

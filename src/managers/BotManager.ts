@@ -757,28 +757,32 @@ export class BotManager {
         return this.bots.get(email);
     }
 
+    private friendCountOf(botInstance: any): number {
+        return botInstance.client?.friend?.list ? botInstance.client.friend.list.size : 0;
+    }
+
+    /**
+     * Bots connectés et non pleins, du moins chargé au plus chargé.
+     *
+     * @param exclure Pseudos à écarter — typiquement les bots déjà amis avec
+     *   l'utilisateur. Sans ça, /add retombait indéfiniment sur le même bot et
+     *   répondait « vous êtes déjà ami », au lieu d'en proposer un autre.
+     */
+    getAvailableBots(exclure: string[] = []): any[] {
+        const exclus = new Set(exclure.map(p => String(p ?? '').toLowerCase()));
+        return this.getActiveBots()
+            .filter(b => b.isConnected && b.client)
+            .filter(b => !exclus.has(String(b.account.pseudo ?? '').toLowerCase()))
+            .filter(b => this.friendCountOf(b) < 900)
+            .sort((a, b) => this.friendCountOf(a) - this.friendCountOf(b));
+    }
+
     /**
      * Gets the best available bot for adding a friend.
      * Criteria: Connected, Friend count < 900, Fewest friends first.
      */
     getBestBot(): any | null {
-        const bots = this.getActiveBots().filter(b => b.isConnected && b.client);
-
-        const availableBots = bots.filter(b => {
-            const friendCount = b.client.friend?.list ? b.client.friend.list.size : 0;
-            return friendCount < 900;
-        });
-
-        if (availableBots.length === 0) return null;
-
-        // Sort by friend count ascending
-        availableBots.sort((a, b) => {
-            const sizeA = a.client.friend?.list ? a.client.friend.list.size : 0;
-            const sizeB = b.client.friend?.list ? b.client.friend.list.size : 0;
-            return sizeA - sizeB;
-        });
-
-        return availableBots[0];
+        return this.getAvailableBots()[0] ?? null;
     }
 
     /**
@@ -881,32 +885,50 @@ export class BotManager {
     async addFriendOnAvailableBot(targetUsername: string): Promise<'SUCCESS' | 'ERROR' | 'FULL' | 'ALREADY_FRIENDS'> {
         console.log(`[BotManager] Trying to add friend: ${targetUsername}`);
 
-        const botInstance = this.getBestBot();
+        if (this.getActiveBots().filter(b => b.isConnected).length === 0) return 'ERROR';
 
-        if (!botInstance) {
-            // Check if it's because full or no bots
-            const connected = this.getActiveBots().filter(b => b.isConnected);
-            if (connected.length === 0) return 'ERROR';
-            // If we have bots but getBestBot returned null, it means all are full
+        const disponibles = this.getAvailableBots();
+        if (disponibles.length === 0) {
             console.warn('[BotManager] All bots are full (>900 friends)');
             return 'FULL';
         }
 
-        const identifier = botInstance.account.pseudo;
+        // Écarter d'emblée les bots qui ont déjà cet utilisateur : inutile de
+        // leur envoyer une demande vouée au DuplicateFriendshipError, et surtout
+        // ça permet d'en proposer un AUTRE au lieu de s'arrêter au premier.
+        const cible = targetUsername.toLowerCase();
+        const candidats = disponibles.filter(b => {
+            const liste = b.client.friend?.list;
+            if (!liste) return true;
+            return !liste.find((f: any) => String(f.displayName ?? '').toLowerCase() === cible);
+        });
 
-        try {
-            console.log(`[${identifier}] Sending friend request to ${targetUsername}...`);
-            await botInstance.client.friend.add(targetUsername);
-            console.log(`[${identifier}] ✅ Friend request sent!`);
-            return 'SUCCESS';
-        } catch (error: any) {
-            if (error?.name === 'DuplicateFriendshipError') {
-                console.log(`[${identifier}] ℹ️ ${targetUsername} est déjà ami`);
-                return 'ALREADY_FRIENDS';
-            }
-            console.error(`[${identifier}] ❌ Failed to add friend:`, error.message);
-            return 'ERROR';
+        if (candidats.length === 0) {
+            console.log(`[BotManager] ${targetUsername} est déjà ami avec les ${disponibles.length} bot(s) disponible(s)`);
+            return 'ALREADY_FRIENDS';
         }
+
+        // On parcourt les candidats : la liste d'amis locale peut être en retard
+        // sur Epic, un DuplicateFriendshipError ne doit donc pas tout arrêter.
+        let derniereErreur: any = null;
+        for (const botInstance of candidats) {
+            const identifier = botInstance.account.pseudo;
+            try {
+                console.log(`[${identifier}] Sending friend request to ${targetUsername}...`);
+                await botInstance.client.friend.add(targetUsername);
+                console.log(`[${identifier}] ✅ Friend request sent!`);
+                return 'SUCCESS';
+            } catch (error: any) {
+                if (error?.name === 'DuplicateFriendshipError') {
+                    console.log(`[${identifier}] ℹ️ ${targetUsername} déjà ami — on essaie le bot suivant`);
+                    continue;
+                }
+                derniereErreur = error;
+                console.error(`[${identifier}] ❌ Failed to add friend:`, error.message);
+            }
+        }
+
+        return derniereErreur ? 'ERROR' : 'ALREADY_FRIENDS';
     }
 
     async removeFriend(targetUsername: string): Promise<boolean> {

@@ -94,7 +94,15 @@ function parseTextBlocks(text: string): RawEntry[] {
         const field = FIELD_ALIASES[normalizeKey(line.slice(0, sep))];
         if (!field) continue;
 
-        const value = line.slice(sep + 1).trim();
+        // Les exports recopiés depuis du JSON gardent guillemets et virgule
+        // finale : `"device_id": "fa79...",`. Sans ce nettoyage la valeur fait
+        // 34 caractères au lieu de 32 et tout le fichier part au rebut.
+        const value = line.slice(sep + 1)
+            .trim()
+            .replace(/[,;]+$/, '')
+            .trim()
+            .replace(/^(["'`])([\s\S]*)\1$/, '$2')
+            .trim();
         if (value === '') continue;
 
         // Une clé qui revient alors qu'elle est déjà remplie = compte suivant,
@@ -136,11 +144,13 @@ function validate(raw: RawEntry): { ok: ParsedAccount } | { error: RejectedAccou
     if (!raw.email!.includes('@')) {
         return { error: { label, reason: 'email invalide (pas de @)' } };
     }
+    // On montre la valeur lue : « 34 caractères reçus » seul ne dit pas si le
+    // coupable est un guillemet, un espace ou une vraie coquille.
     if (!HEX32.test(raw.deviceId!)) {
-        return { error: { label, reason: `DEVICE_ID invalide (32 caractères hexadécimaux attendus, ${raw.deviceId!.length} reçus)` } };
+        return { error: { label, reason: `DEVICE_ID invalide (32 caractères hexadécimaux attendus, ${raw.deviceId!.length} reçus) : \`${raw.deviceId!.slice(0, 40)}\`` } };
     }
     if (!HEX32.test(raw.accountId!)) {
-        return { error: { label, reason: `ACCOUNT_ID invalide (32 caractères hexadécimaux attendus, ${raw.accountId!.length} reçus)` } };
+        return { error: { label, reason: `ACCOUNT_ID invalide (32 caractères hexadécimaux attendus, ${raw.accountId!.length} reçus) : \`${raw.accountId!.slice(0, 40)}\`` } };
     }
     if (!ALNUM32.test(raw.secret!)) {
         return { error: { label, reason: `SECRET invalide (32 caractères alphanumériques attendus, ${raw.secret!.length} reçus)` } };

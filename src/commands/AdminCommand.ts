@@ -3,6 +3,7 @@ import axios from 'axios';
 import { Command, CommandContext } from './Command';
 import { fernetEncrypt, hasMasterKey } from '../utils/Fernet';
 import { parseAccountsFile } from '../utils/AccountsFileParser';
+import { verifyDeviceAuthBatch } from '../utils/EpicDeviceAuth';
 
 // Charger les IDs admin depuis .env (séparés par des virgules)
 // Les admins vivent dans la table `admins` (Postgres) ; ADMIN_IDS du .env
@@ -102,17 +103,7 @@ export const AdminCommand: Command = {
                 const response = await axios.get(attachment.url, { responseType: 'text', timeout: 15_000, transformResponse: [(d) => d] });
                 const { entries: parsed, rejected, format } = parseAccountsFile(String(response.data ?? ''));
 
-                const entries = parsed.map(a => ({
-                    email: a.email,
-                    pseudo: a.pseudo ?? undefined,
-                    // Mot de passe : chiffré Fernet comme le fait le générateur (même clé)
-                    password_enc: a.password ? (fernetEncrypt(a.password) ?? undefined) : undefined,
-                    deviceId: a.deviceId,
-                    accountId: a.accountId,
-                    secret: a.secret,
-                }));
-
-                if (entries.length === 0) {
+                if (parsed.length === 0) {
                     const lines = [`❌ Aucune entrée valide dans \`${attachment.name}\` (format détecté : **${format}**).`];
                     if (rejected.length > 0) {
                         lines.push('', 'Détail :');
@@ -134,31 +125,68 @@ export const AdminCommand: Command = {
                     return;
                 }
 
-                console.log(`[Admin] ${interaction.user.tag} importe ${entries.length} bot(s) (format ${format})`);
+                // On teste CHAQUE device auth auprès d'Epic avant d'écrire quoi que
+                // ce soit. Un fichier peut être impeccable et plein de comptes morts :
+                // les importer polluait la base, rallongeait chaque démarrage, et
+                // pouvait écraser les identifiants valides d'un compte déjà présent.
+                await interaction.editReply(`🔍 Vérification de ${parsed.length} compte(s) auprès d'Epic… (quelques secondes)`);
+                const verdicts = await verifyDeviceAuthBatch(parsed, 4);
+
+                const valides = parsed.filter(a => verdicts.get(a)?.ok);
+
+                // Un refus n'a pas le même sens selon que le compte est déjà connu :
+                //   - inconnu  → on ne l'ajoute pas (rien à préserver) ;
+                //   - déjà en base → on garde ses valeurs actuelles intactes, le
+                //     fichier apportait juste un device auth périmé.
+                const refuses = parsed.filter(a => !verdicts.get(a)?.ok);
+                const dejaEnBase = await context.dbManager.getExistingEmails(refuses.map(a => a.email));
+                const refusesInconnus = refuses.filter(a => !dejaEnBase.has(a.email))
+                    .map(a => ({ label: a.pseudo || a.email, reason: verdicts.get(a)?.reason || 'refusé par Epic' }));
+                const conservesIntacts = refuses.filter(a => dejaEnBase.has(a.email))
+                    .map(a => ({ label: a.pseudo || a.email, reason: verdicts.get(a)?.reason || 'refusé par Epic' }));
+                const refusesParEpic = [...refusesInconnus, ...conservesIntacts];
+
+                if (valides.length === 0) {
+                    const lines = [`❌ Aucun compte valide : les ${parsed.length} device auth(s) du fichier sont refusés par Epic. **Rien n'a été écrit en base.**`];
+                    lines.push(...refusesParEpic.slice(0, 8).map(r => `• \`${r.label}\` → ${r.reason}`));
+                    if (refusesParEpic.length > 8) lines.push(`• … et ${refusesParEpic.length - 8} autre(s)`);
+                    if (rejected.length > 0) lines.push(`⚠️ Plus ${rejected.length} entrée(s) illisible(s) dans le fichier.`);
+                    await interaction.editReply(lines.join('\n'));
+                    return;
+                }
+
+                const entries = valides.map(a => ({
+                    email: a.email,
+                    // Epic connaît le vrai pseudo : il comble un fichier qui n'en a pas.
+                    pseudo: a.pseudo ?? verdicts.get(a)?.displayName ?? undefined,
+                    password_enc: a.password ? (fernetEncrypt(a.password) ?? undefined) : undefined,
+                    deviceId: a.deviceId,
+                    accountId: a.accountId,
+                    secret: a.secret,
+                }));
+
+                console.log(`[Admin] ${interaction.user.tag} importe ${entries.length}/${parsed.length} bot(s) valides (format ${format})`);
                 const { inserted, updated } = await context.dbManager.importBots(entries, interaction.user.id);
                 const launched = await context.botManager.syncFromDB();
 
-                // Un compte peut être parfaitement écrit dans le fichier et bien
-                // enregistré en BD, mais refusé par Epic (device auth révoqué, ban…).
-                // On nomme ces comptes-là : sans ça, l'écart entre « créés » et
-                // « lancés » ne dit pas LESQUELS n'ont pas démarré.
-                const enLigne = new Set(context.botManager.getActiveBots().map((b: any) => b.account.email));
-                const nonLances = entries.filter(e => !enLigne.has(e.email));
-
                 const lines = [
-                    `✅ Import terminé : **${inserted}** créé(s), **${updated}** mis à jour (owner : <@${interaction.user.id}>).`,
+                    `✅ **${inserted}** compte(s) créé(s), **${updated}** mis à jour — tous validés par Epic (owner : <@${interaction.user.id}>).`,
                     `🚀 ${launched} bot(s) lancé(s) immédiatement.`,
                 ];
                 if (rejected.length > 0) {
-                    lines.push(`⚠️ **${rejected.length}** entrée(s) ignorée(s) — fichier incomplet, rien en BD :`);
+                    lines.push(`⚠️ **${rejected.length}** entrée(s) illisible(s) dans le fichier — rien en BD :`);
                     lines.push(...rejected.slice(0, 5).map(r => `• \`${r.label}\` → ${r.reason}`));
                     if (rejected.length > 5) lines.push(`• … et ${rejected.length - 5} autre(s)`);
                 }
-                if (nonLances.length > 0) {
-                    lines.push(`⚠️ **${nonLances.length}** compte(s) en BD mais refusé(s) par Epic (device auth expiré ou compte banni) :`);
-                    lines.push(...nonLances.slice(0, 5).map(e => `• \`${e.pseudo || e.email}\``));
-                    if (nonLances.length > 5) lines.push(`• … et ${nonLances.length - 5} autre(s)`);
-                    lines.push('_Les autres bots ne sont pas affectés._');
+                if (refusesInconnus.length > 0) {
+                    lines.push(`🚫 **${refusesInconnus.length}** compte(s) refusé(s) par Epic — **non enregistré(s)** :`);
+                    lines.push(...refusesInconnus.slice(0, 5).map(r => `• \`${r.label}\` → ${r.reason}`));
+                    if (refusesInconnus.length > 5) lines.push(`• … et ${refusesInconnus.length - 5} autre(s)`);
+                }
+                if (conservesIntacts.length > 0) {
+                    lines.push(`🛡️ **${conservesIntacts.length}** compte(s) déjà en base — **valeurs actuelles conservées** (le device auth du fichier est mort) :`);
+                    lines.push(...conservesIntacts.slice(0, 5).map(r => `• \`${r.label}\` → ${r.reason}`));
+                    if (conservesIntacts.length > 5) lines.push(`• … et ${conservesIntacts.length - 5} autre(s)`);
                 }
                 if (entries.some(e => e.password_enc === undefined) && !hasMasterKey()) {
                     lines.push('⚠️ EPIC_MASTER_KEY absente : mots de passe non stockés (device auth importés quand même).');

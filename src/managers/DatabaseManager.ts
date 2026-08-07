@@ -142,7 +142,9 @@ export class DatabaseManager {
                     `INSERT INTO epic_accounts (email, pseudo, password_enc, device_id, account_id, secret_id, is_active, owner_discord_id)
                      VALUES ($1, $2, $3, $4, $5, $6, 1, $7)
                      ON CONFLICT (email) DO UPDATE SET
-                         pseudo = EXCLUDED.pseudo,
+                         -- COALESCE et pas EXCLUDED. sec : un fichier sans pseudo
+                         -- effaçait le pseudo existant (vécu sur 1.GameBot).
+                         pseudo = COALESCE(EXCLUDED.pseudo, epic_accounts.pseudo),
                          password_enc = COALESCE(EXCLUDED.password_enc, epic_accounts.password_enc),
                          device_id = EXCLUDED.device_id,
                          account_id = EXCLUDED.account_id,
@@ -157,6 +159,17 @@ export class DatabaseManager {
             }
         });
         return { inserted, updated };
+    }
+
+    /** Quels emails de cette liste existent déjà ? Sert à distinguer, à l'import,
+     *  un compte inconnu refusé par Epic (on ne l'ajoute pas) d'un compte déjà en
+     *  base dont le fichier apporte un device auth mort (on garde l'existant). */
+    public async getExistingEmails(emails: string[]): Promise<Set<string>> {
+        if (emails.length === 0) return new Set();
+        const { rows } = await this.pool.query(
+            'SELECT email FROM epic_accounts WHERE email = ANY($1::text[])', [emails]
+        );
+        return new Set(rows.map(r => r.email));
     }
 
     public async removeBot(email: string): Promise<void> {

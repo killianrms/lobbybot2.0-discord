@@ -103,18 +103,60 @@ export class BotManager {
                 account,
                 client: bot,
                 isConnected: false,
+                // Bloque l'auto-reconnexion tant que le login initial est en vol :
+                // deux client.login() concurrents sur le même client se marchent
+                // dessus (le premier échoue, le second réussit hors registre).
+                isLoggingIn: true,
                 connectionAttempts: 0,
             };
 
             this.bots.set(account.email, instance);
 
-            await bot.login();
+            // Le tout premier login d'un compte accepte l'EULA, ce qui invalide la
+            // session en cours : fnbr enchaîne sur l'initialisation de partie et
+            // Epic répond « User [...] is offline ». Un second login passe. On
+            // tente donc deux fois avant de déclarer le compte mort.
+            let lastError: any;
+            for (let attempt = 1; attempt <= 2; attempt++) {
+                try {
+                    await bot.login();
+                    lastError = undefined;
+                    break;
+                } catch (e: any) {
+                    lastError = e;
+                    if (attempt < 2) {
+                        console.warn(`[${identifier}] ⚠️ Login refusé (${e.message}) — nouvelle tentative dans 5s`);
+                        await new Promise(resolve => setTimeout(resolve, 5000));
+                    }
+                }
+            }
+            instance.isLoggingIn = false;
+            if (lastError) throw lastError;
+
             instance.isConnected = true;
             console.log(`[${identifier}] ✅ Connecté!\n`);
             FailedBotRegistry.clearFailure(account.email); // login réussi : oublier les échecs passés
             return true;
 
         } catch (error: any) {
+            // Une reconnexion automatique a pu être déclenchée par un événement
+            // 'disconnected' reçu PENDANT le login initial. Si elle a abouti, le
+            // compte est réellement connecté : le retirer du registre le rendrait
+            // invisible du manager (flotte à 4/5) tout en le laissant logué chez
+            // Epic — exactement le bogue vu le 2026-08-07 sur 1.GameBot.
+            const current = this.bots.get(account.email);
+            if (current?.isConnected) {
+                current.isLoggingIn = false;
+                console.log(`[${identifier}] ✅ Connecté via la reconnexion automatique (login initial : ${error.message})`);
+                FailedBotRegistry.clearFailure(account.email);
+                return true;
+            }
+            if (current?.isReconnecting) {
+                current.isLoggingIn = false;
+                console.warn(`[${identifier}] ⚠️ Login initial échoué (${error.message}) — une reconnexion est en cours, on la laisse aboutir`);
+                return false;
+            }
+
             console.error(`[${identifier}] ❌ Erreur: ${error.message}`);
             this.bots.delete(account.email);
             this.failedBots.add(account.email); // ne pas retenter ce bot cette session
@@ -553,13 +595,25 @@ export class BotManager {
 
         // isReconnecting évite les tentatives concurrentes (déclencheurs
         // multiples : 'disconnected', 'session:close', health check).
-        if (!instance || instance.isConnected || instance.isReconnecting || this.failedBots.has(account.email)) return;
+        // isLoggingIn couvre le cas du login initial : fnbr émet 'disconnected'
+        // pendant celui-ci, et un second login() concurrent sur le même client
+        // fait échouer le premier.
+        if (!instance || instance.isConnected || instance.isReconnecting || instance.isLoggingIn || this.failedBots.has(account.email)) return;
 
         instance.isReconnecting = true;
         try {
             console.log(`[${identifier}] 🔄 Tentative de reconnexion...`);
             await instance.client.login();
             instance.isConnected = true;
+            // Le login initial a pu échouer et retirer l'instance du registre
+            // pendant que cette reconnexion était en vol : on la réenregistre,
+            // sinon le bot reste connecté chez Epic mais absent de la flotte.
+            if (!this.bots.has(account.email)) {
+                console.log(`[${identifier}] ↩️ Réintégré à la flotte après reconnexion`);
+                this.bots.set(account.email, instance);
+            }
+            this.failedBots.delete(account.email);
+            FailedBotRegistry.clearFailure(account.email);
             console.log(`[${identifier}] ✅ Bot reconnecté!`);
         } catch (e: any) {
             console.error(`[${identifier}] ❌ Reconnexion échouée: ${e.message}`);

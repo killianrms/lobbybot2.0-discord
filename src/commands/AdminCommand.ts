@@ -138,14 +138,27 @@ export const AdminCommand: Command = {
                 const { inserted, updated } = await context.dbManager.importBots(entries, interaction.user.id);
                 const launched = await context.botManager.syncFromDB();
 
+                // Un compte peut être parfaitement écrit dans le fichier et bien
+                // enregistré en BD, mais refusé par Epic (device auth révoqué, ban…).
+                // On nomme ces comptes-là : sans ça, l'écart entre « créés » et
+                // « lancés » ne dit pas LESQUELS n'ont pas démarré.
+                const enLigne = new Set(context.botManager.getActiveBots().map((b: any) => b.account.email));
+                const nonLances = entries.filter(e => !enLigne.has(e.email));
+
                 const lines = [
                     `✅ Import terminé : **${inserted}** créé(s), **${updated}** mis à jour (owner : <@${interaction.user.id}>).`,
                     `🚀 ${launched} bot(s) lancé(s) immédiatement.`,
                 ];
                 if (rejected.length > 0) {
-                    lines.push(`⚠️ ${rejected.length} entrée(s) ignorée(s) :`);
+                    lines.push(`⚠️ **${rejected.length}** entrée(s) ignorée(s) — fichier incomplet, rien en BD :`);
                     lines.push(...rejected.slice(0, 5).map(r => `• \`${r.label}\` → ${r.reason}`));
                     if (rejected.length > 5) lines.push(`• … et ${rejected.length - 5} autre(s)`);
+                }
+                if (nonLances.length > 0) {
+                    lines.push(`⚠️ **${nonLances.length}** compte(s) en BD mais refusé(s) par Epic (device auth expiré ou compte banni) :`);
+                    lines.push(...nonLances.slice(0, 5).map(e => `• \`${e.pseudo || e.email}\``));
+                    if (nonLances.length > 5) lines.push(`• … et ${nonLances.length - 5} autre(s)`);
+                    lines.push('_Les autres bots ne sont pas affectés._');
                 }
                 if (entries.some(e => e.password_enc === undefined) && !hasMasterKey()) {
                     lines.push('⚠️ EPIC_MASTER_KEY absente : mots de passe non stockés (device auth importés quand même).');

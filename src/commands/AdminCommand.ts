@@ -147,10 +147,25 @@ export const AdminCommand: Command = {
                 const refusesParEpic = [...refusesInconnus, ...conservesIntacts];
 
                 if (valides.length === 0) {
-                    const lines = [`❌ Aucun compte valide : les ${parsed.length} device auth(s) du fichier sont refusés par Epic. **Rien n'a été écrit en base.**`];
-                    lines.push(...refusesParEpic.slice(0, 8).map(r => `• \`${r.label}\` → ${r.reason}`));
-                    if (refusesParEpic.length > 8) lines.push(`• … et ${refusesParEpic.length - 8} autre(s)`);
-                    if (rejected.length > 0) lines.push(`⚠️ Plus ${rejected.length} entrée(s) illisible(s) dans le fichier.`);
+                    // Même découpage que le rapport de succès : mélanger « refusé »
+                    // et « conservé » laissait croire qu'un bot en service était
+                    // cassé alors que ses valeurs en base n'avaient pas bougé.
+                    const lines = [`❌ Aucun device auth valide dans \`${attachment.name}\` — **rien n'a été écrit en base.**`];
+                    if (refusesInconnus.length > 0) {
+                        lines.push(`🚫 **${refusesInconnus.length}** compte(s) inconnu(s) refusé(s) par Epic — non enregistré(s) :`);
+                        lines.push(...refusesInconnus.slice(0, 6).map(r => `• \`${r.label}\` → ${r.reason}`));
+                        if (refusesInconnus.length > 6) lines.push(`• … et ${refusesInconnus.length - 6} autre(s)`);
+                    }
+                    if (conservesIntacts.length > 0) {
+                        lines.push(`🛡️ **${conservesIntacts.length}** compte(s) déjà en base — **inchangé(s)**, tes valeurs actuelles restent en place :`);
+                        lines.push(...conservesIntacts.slice(0, 6).map(r => `• \`${r.label}\``));
+                        if (conservesIntacts.length > 6) lines.push(`• … et ${conservesIntacts.length - 6} autre(s)`);
+                    }
+                    if (rejected.length > 0) {
+                        lines.push(`⚠️ **${rejected.length}** entrée(s) illisible(s) dans le fichier :`);
+                        lines.push(...rejected.slice(0, 6).map(r => `• \`${r.label}\` → ${r.reason}`));
+                        if (rejected.length > 6) lines.push(`• … et ${rejected.length - 6} autre(s)`);
+                    }
                     await interaction.editReply(lines.join('\n'));
                     return;
                 }

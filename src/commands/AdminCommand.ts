@@ -2,6 +2,7 @@ import { SlashCommandBuilder, ChatInputCommandInteraction } from 'discord.js';
 import axios from 'axios';
 import { Command, CommandContext } from './Command';
 import { fernetEncrypt, hasMasterKey } from '../utils/Fernet';
+import { parseAccountsFile } from '../utils/AccountsFileParser';
 
 // Charger les IDs admin depuis .env (séparés par des virgules)
 // Les admins vivent dans la table `admins` (Postgres) ; ADMIN_IDS du .env
@@ -21,8 +22,8 @@ export const AdminCommand: Command = {
         .addSubcommand(subcommand =>
             subcommand
                 .setName('addbot')
-                .setDescription('Importer des bots depuis un fichier JSON du générateur (upsert, owner = toi)')
-                .addAttachmentOption(option => option.setName('fichier').setDescription('accounts.json exporté par le générateur (ou un objet unique)').setRequired(true))
+                .setDescription('Importer des bots depuis un fichier du générateur — JSON ou texte (upsert, owner = toi)')
+                .addAttachmentOption(option => option.setName('fichier').setDescription('JSON du générateur, ou .txt avec email / DEVICE_ID / ACCOUNT_ID / SECRET').setRequired(true))
         )
         .addSubcommand(subcommand =>
             subcommand
@@ -94,37 +95,46 @@ export const AdminCommand: Command = {
             }
 
             try {
-                const response = await axios.get(attachment.url, { responseType: 'json', timeout: 15_000 });
-                // Format du générateur : tableau d'objets {email, password, pseudo,
-                // device_auth:{device_id, account_id, secret_id}} — un objet seul est toléré.
-                const raw = Array.isArray(response.data) ? response.data : [response.data];
+                // `responseType: 'text'` et pas 'json' : c'est le parser qui décide
+                // du format. Avec 'json', axios rendait un .txt sous forme de chaîne
+                // brute, qui finissait « rejetée — device auth incomplet » alors que
+                // le fichier était parfaitement valide.
+                const response = await axios.get(attachment.url, { responseType: 'text', timeout: 15_000, transformResponse: [(d) => d] });
+                const { entries: parsed, rejected, format } = parseAccountsFile(String(response.data ?? ''));
 
-                const entries: Array<{ email: string; pseudo?: string; password_enc?: string; deviceId?: string; accountId?: string; secret?: string }> = [];
-                const rejected: string[] = [];
-                for (const item of raw) {
-                    const da = item?.device_auth ?? item?.deviceAuth ?? {};
-                    const deviceId = da.device_id ?? da.deviceId;
-                    const accountId = da.account_id ?? da.accountId;
-                    const secret = da.secret_id ?? da.secret;
-                    if (!item?.email || !deviceId || !accountId || !secret) {
-                        rejected.push(item?.email || item?.pseudo || '(entrée sans email)');
-                        continue;
-                    }
-                    entries.push({
-                        email: item.email,
-                        pseudo: item.pseudo ?? item.display_name ?? null,
-                        // Mot de passe : chiffré Fernet comme le fait le générateur (même clé)
-                        password_enc: item.password ? (fernetEncrypt(item.password) ?? undefined) : undefined,
-                        deviceId, accountId, secret,
-                    });
-                }
+                const entries = parsed.map(a => ({
+                    email: a.email,
+                    pseudo: a.pseudo ?? undefined,
+                    // Mot de passe : chiffré Fernet comme le fait le générateur (même clé)
+                    password_enc: a.password ? (fernetEncrypt(a.password) ?? undefined) : undefined,
+                    deviceId: a.deviceId,
+                    accountId: a.accountId,
+                    secret: a.secret,
+                }));
 
                 if (entries.length === 0) {
-                    await interaction.editReply(`❌ Aucune entrée valide dans le fichier (${rejected.length} rejetée(s) — device auth incomplet ?).`);
+                    const lines = [`❌ Aucune entrée valide dans \`${attachment.name}\` (format détecté : **${format}**).`];
+                    if (rejected.length > 0) {
+                        lines.push('', 'Détail :');
+                        lines.push(...rejected.slice(0, 5).map(r => `• \`${r.label}\` → ${r.reason}`));
+                        if (rejected.length > 5) lines.push(`• … et ${rejected.length - 5} autre(s)`);
+                    } else {
+                        lines.push('', 'Aucun champ reconnu. Formats acceptés :',
+                            '```',
+                            'email: bot@gmail.com',
+                            'password: ...',
+                            'pseudo: 1.GameBot',
+                            'DEVICE_ID=...',
+                            'ACCOUNT_ID=...',
+                            'SECRET=...',
+                            '```',
+                            '…ou le JSON exporté par le générateur.');
+                    }
+                    await interaction.editReply(lines.join('\n'));
                     return;
                 }
 
-                console.log(`[Admin] ${interaction.user.tag} importe ${entries.length} bot(s) via JSON`);
+                console.log(`[Admin] ${interaction.user.tag} importe ${entries.length} bot(s) (format ${format})`);
                 const { inserted, updated } = await context.dbManager.importBots(entries, interaction.user.id);
                 const launched = await context.botManager.syncFromDB();
 
@@ -132,7 +142,11 @@ export const AdminCommand: Command = {
                     `✅ Import terminé : **${inserted}** créé(s), **${updated}** mis à jour (owner : <@${interaction.user.id}>).`,
                     `🚀 ${launched} bot(s) lancé(s) immédiatement.`,
                 ];
-                if (rejected.length > 0) lines.push(`⚠️ ${rejected.length} entrée(s) ignorée(s) : ${rejected.slice(0, 10).join(', ')}${rejected.length > 10 ? '…' : ''}`);
+                if (rejected.length > 0) {
+                    lines.push(`⚠️ ${rejected.length} entrée(s) ignorée(s) :`);
+                    lines.push(...rejected.slice(0, 5).map(r => `• \`${r.label}\` → ${r.reason}`));
+                    if (rejected.length > 5) lines.push(`• … et ${rejected.length - 5} autre(s)`);
+                }
                 if (entries.some(e => e.password_enc === undefined) && !hasMasterKey()) {
                     lines.push('⚠️ EPIC_MASTER_KEY absente : mots de passe non stockés (device auth importés quand même).');
                 }

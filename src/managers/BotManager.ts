@@ -42,6 +42,19 @@ export class BotManager {
     // Danse jouée quand un joueur rejoint le lobby (vide = aucune).
     private joinEmote: string = process.env.JOIN_EMOTE ?? 'Scenario';
 
+    // Île/mode par défaut du lobby, et taille max.
+    //
+    // En Battle Royale, Epic plafonne la party à 4. Sur une île créative la
+    // limite dépend de l'île elle-même. On sélectionne donc l'île PUIS on règle
+    // la taille — dans cet ordre : tant que la playlist BR est active, Epic
+    // refuse une taille supérieure à 4.
+    //
+    // PARTY_PLAYLIST accepte un code d'île « 1234-5678-9012 » ou un mnemonic de
+    // playlist (playlist_playgroundv2 = créatif générique). Vide = on ne touche
+    // à rien, comportement d'avant.
+    private partyPlaylist: string = process.env.PARTY_PLAYLIST ?? '3225-0366-8885';
+    private partyMaxSize: number = Math.min(16, Math.max(0, parseInt(process.env.PARTY_MAX_SIZE || '8', 10)));
+
     // Global config (managed from admin dashboard) — sert de DÉFAUT pour les
     // owners qui n'ont pas de réglages propres dans owner_settings.
     public globalStatus: string = 'USE CODE CREATOR: aeroz';
@@ -286,6 +299,8 @@ export class BotManager {
                 }
                 // Chaque nouvelle party repart avec un meta vierge : réappliquer le loadout
                 await this.applyDefaultLoadout(bot, identifier);
+                // …et l'île + la taille du lobby, pour la même raison.
+                await this.applyPartyDefaults(bot, identifier);
                 // Le bot vient de rejoindre le lobby de quelqu'un d'autre : l'event
                 // party:member:joined ne se déclenche que pour les arrivées FUTURES,
                 // donc on friend-request tout de suite les membres déjà présents.
@@ -531,6 +546,37 @@ export class BotManager {
             console.log(`[${identifier}] ${occupied ? '🔒 Lobby verrouillé (joueur présent)' : '🔓 Lobby rouvert (bot seul)'}`);
         } catch (e: any) {
             console.error(`[${identifier}] ❌ Privacy exclusivité: ${e.message}`);
+        }
+    }
+
+    /**
+     * Applique l'île et la taille max au lobby du bot.
+     *
+     * Uniquement quand le bot est chef : ces deux réglages appartiennent au
+     * propriétaire du lobby, et Epic refuse le patch sinon. L'ordre est imposé —
+     * l'île d'abord, la taille ensuite : sur une playlist Battle Royale, Epic
+     * plafonne la party à 4 et rejette toute taille supérieure.
+     */
+    private async applyPartyDefaults(bot: Client, identifier: string): Promise<void> {
+        const party: any = (bot as any).party;
+        if (!party?.me?.isLeader) return;
+
+        // La taille max ne part PAS par party.setMaxSize() : celui-ci renvoie tout
+        // le schéma meta et Epic le rejette (« Invalid fields were
+        // [body.meta.update] »). Un patch meta vide est refusé aussi
+        // (« [body.meta] »). Mais sendPatch() emporte config.max_size à CHAQUE
+        // appel : il suffit donc de poser la valeur avant un patch par ailleurs
+        // valide — celui de l'île. Une seule requête pour les deux réglages.
+        if (this.partyMaxSize > 0 && this.partyMaxSize >= (party.size ?? 1)) {
+            party.config.maxSize = this.partyMaxSize;
+        }
+
+        if (!this.partyPlaylist) return;
+        try {
+            await party.setPlaylist(this.partyPlaylist);
+            console.log(`[${identifier}] 🗺️ Lobby : île ${this.partyPlaylist}, ${party.maxSize} places`);
+        } catch (e: any) {
+            console.error(`[${identifier}] ❌ Réglages du lobby (${this.partyPlaylist}): ${e.message}`);
         }
     }
 

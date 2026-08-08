@@ -698,6 +698,45 @@ export class BotManager {
         return launched;
     }
 
+    /**
+     * Republie périodiquement la présence EOS de chaque bot connecté.
+     *
+     * La présence EOS est ce que le client Fortnite lit réellement : sans elle,
+     * un bot apparaît HORS LIGNE en jeu même si sa connexion XMPP/STOMP est
+     * parfaitement vivante. Or elle n'était publiée qu'au travers du wrapper
+     * setStatus() — donc uniquement à la connexion et sur les événements
+     * (ami accepté, invitation, changement de config).
+     *
+     * Conséquence observée le 2026-08-08 : les 5 bots d'Aurélien (1 à 3 amis,
+     * 0 événement en une heure) apparaissaient déconnectés en jeu, pendant que
+     * ceux de Killian (700 à 950 amis, 456 événements sur la même heure)
+     * restaient visibles — leur présence était rafraîchie par accident, par le
+     * trafic. Un bot au repos n'a pas ce filet.
+     *
+     * Les envois sont espacés : 72 PATCH d'un coup, c'est un rate-limit Epic
+     * assuré. sendEOSPresence() ne fait rien si STOMP n'est pas connecté.
+     */
+    public startPresenceRefresh(intervalMs: number = 240_000, espacementMs: number = 250): void {
+        console.log(`[BotManager] 🟢 Rafraîchissement de la présence EOS toutes les ${intervalMs / 1000}s`);
+        setInterval(async () => {
+            const connectes = Array.from(this.bots.values()).filter(b => b.isConnected && b.client);
+            let ok = 0;
+            const echecs: string[] = [];
+            for (const instance of connectes) {
+                try {
+                    await sendEOSPresence(instance.client);
+                    ok++;
+                } catch (e: any) {
+                    echecs.push(`${instance.account.pseudo || instance.account.email}: ${e.message}`);
+                }
+                if (espacementMs > 0) await new Promise(r => setTimeout(r, espacementMs));
+            }
+            if (echecs.length > 0) {
+                console.warn(`[BotManager] 🟠 Présence EOS republiée sur ${ok}/${connectes.length} bot(s) — ${echecs.length} échec(s) : ${echecs.slice(0, 3).join(' | ')}`);
+            }
+        }, intervalMs);
+    }
+
     public startDBSync(intervalMs: number = 300_000): void {
         console.log(`[BotManager] 🔁 Synchronisation BD toutes les ${intervalMs / 1000}s`);
         setInterval(async () => {

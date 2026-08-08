@@ -77,6 +77,9 @@ async function main() {
     // Check DB every 5min for new bots added externally
     botManager.startDBSync();
     botManager.startHealthCheck();
+    // Sans ça, un bot sans trafic disparaît de la liste d'amis in-game au bout
+    // de quelques heures, alors que sa connexion est intacte.
+    botManager.startPresenceRefresh();
     backupManager.startAutoBackup();
 
     await discordManager.start(process.env.DISCORD_TOKEN || '');

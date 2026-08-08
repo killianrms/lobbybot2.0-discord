@@ -16,7 +16,27 @@ import * as BotLobby from '../services/BotLobbyService';
 
 export class BotManager {
     private bots: Map<string, any> = new Map();
-    private failedBots: Set<string> = new Set(); // bots avec credentials invalides, pas de retry
+    /**
+     * Bots dont le lancement a échoué, avec la date du dernier échec et le nombre
+     * de tentatives.
+     *
+     * C'était un Set : un bot écarté l'était pour toute la vie du process. Un
+     * simple hoquet Epic (rate-limit, coupure réseau, 5xx) suffisait donc à le
+     * retirer définitivement de la flotte, sans aucune reprise — la flotte
+     * s'érodait en silence jusqu'au prochain redémarrage du conteneur. Intenable
+     * sur une semaine sans personne devant.
+     *
+     * Chaque échec est désormais réessayé, avec un délai qui double : 15 min,
+     * 30 min, 1 h, 2 h, 4 h, puis 6 h au maximum. Un incident passager se répare
+     * tout seul en quinze minutes ; un compte réellement mort ne coûte que
+     * quelques tentatives par jour.
+     */
+    private failedBots: Map<string, { since: number; attempts: number }> = new Map();
+    private static readonly RETRY_BASE_MS = 15 * 60_000;
+    private static readonly RETRY_MAX_MS = 6 * 60 * 60_000;
+
+    /** Nombre de comptes actifs attendus en base — référence du seuil d'alerte. */
+    private expectedBots: number = 0;
     private dbManager: DatabaseManager;
     private cosmeticManagers: Map<string, CosmeticManager> = new Map();
     private sentMessageIds: Map<string, Set<string>> = new Map();
@@ -195,7 +215,7 @@ export class BotManager {
 
             console.error(`[${identifier}] ❌ Erreur: ${error.message}`);
             this.bots.delete(account.email);
-            this.failedBots.add(account.email); // ne pas retenter ce bot cette session
+            this.recordFailure(account.email); // réessayé plus tard, délai croissant
             // Trace persistante : un reset de device auth côté Epic est récupérable,
             // un ban ne l'est pas — on garde le compte pour revue avant suppression
             FailedBotRegistry.recordFailure(account.email, account.pseudo, error.message);
@@ -492,6 +512,26 @@ export class BotManager {
     }
 
     /** Nombre de membres de la party autres que le bot lui-même. */
+    /** Enregistre un échec et allonge le délai avant la prochaine tentative. */
+    private recordFailure(email: string): void {
+        const precedent = this.failedBots.get(email);
+        this.failedBots.set(email, {
+            since: Date.now(),
+            attempts: (precedent?.attempts ?? 0) + 1,
+        });
+    }
+
+    /** Ce bot est-il encore en quarantaine, ou peut-on le retenter ? */
+    private isBlacklisted(email: string): boolean {
+        const echec = this.failedBots.get(email);
+        if (!echec) return false;
+        const delai = Math.min(
+            BotManager.RETRY_BASE_MS * 2 ** (echec.attempts - 1),
+            BotManager.RETRY_MAX_MS,
+        );
+        return Date.now() - echec.since < delai;
+    }
+
     /** Les comptes Epic de notre propre flotte. */
     private ownBotAccountIds(): Set<string> {
         const ids = new Set<string>();
@@ -702,7 +742,7 @@ export class BotManager {
         // isLoggingIn couvre le cas du login initial : fnbr émet 'disconnected'
         // pendant celui-ci, et un second login() concurrent sur le même client
         // fait échouer le premier.
-        if (!instance || instance.isConnected || instance.isReconnecting || instance.isLoggingIn || this.failedBots.has(account.email)) return;
+        if (!instance || instance.isConnected || instance.isReconnecting || instance.isLoggingIn || this.isBlacklisted(account.email)) return;
 
         instance.isReconnecting = true;
         try {
@@ -754,6 +794,7 @@ export class BotManager {
     async launchAllBots(delayBetweenBots: number = 3000): Promise<void> {
         // READ FROM DB (Async)
         const accounts = await this.dbManager.getAllBots();
+        this.expectedBots = accounts.length;
         console.log(`📋 ${accounts.length} compte(s) trouvé(s) en Base de Données\n`);
 
         for (let i = 0; i < accounts.length; i++) {
@@ -771,8 +812,9 @@ export class BotManager {
     public async syncFromDB(): Promise<number> {
         let launched = 0;
         const accounts = await this.dbManager.getAllBots();
+        this.expectedBots = accounts.length;
         for (const account of accounts) {
-            if (!this.bots.has(account.email) && !this.failedBots.has(account.email)) {
+            if (!this.bots.has(account.email) && !this.isBlacklisted(account.email)) {
                 console.log(`[BotManager] 🆕 Nouveau bot détecté en BD: ${account.pseudo || account.email}`);
                 if (await this.launchBot(account)) launched++;
             }
@@ -850,8 +892,14 @@ export class BotManager {
     }
 
     public startHealthCheck(intervalMs: number = 60_000): void {
-        const minActive = parseInt(process.env.MIN_ACTIVE_BOTS_ALERT || '1', 10);
-        console.log(`[BotManager] 🩺 Health check toutes les ${intervalMs / 1000}s (seuil: ${minActive} bot(s) actif(s) min)`);
+        // Seuil PROPORTIONNEL à la flotte attendue. Un seuil fixe à 1 ne se
+        // déclenchait que si les 74 bots tombaient d'un coup : une érosion de
+        // 74 à 10 passait totalement inaperçue. On compare au nombre de comptes
+        // actifs en base, pas au nombre de bots encore chargés en mémoire —
+        // sinon la référence rétrécit avec la panne et masque le problème.
+        const pourcentMin = Math.min(100, Math.max(1, parseInt(process.env.MIN_ACTIVE_BOTS_PERCENT || '70', 10)));
+        const minAbsolu = parseInt(process.env.MIN_ACTIVE_BOTS_ALERT || '0', 10);
+        console.log(`[BotManager] 🩺 Health check toutes les ${intervalMs / 1000}s (seuil: ${pourcentMin}% de la flotte)`);
 
         setInterval(() => {
             const total = this.bots.size;
@@ -860,16 +908,23 @@ export class BotManager {
             // Filet de sécurité : relance les bots restés déconnectés
             // (les timers de reconnexion peuvent avoir tous échoué).
             for (const instance of this.bots.values()) {
-                if (!instance.isConnected && !this.failedBots.has(instance.account.email)) {
+                if (!instance.isConnected && !this.isBlacklisted(instance.account.email)) {
                     this.reconnectBot(instance.account);
                 }
             }
 
-            if (total > 0 && active < minActive) {
+            const attendus = Math.max(this.expectedBots, total);
+            const seuil = Math.max(minAbsolu, Math.floor(attendus * pourcentMin / 100));
+            if (attendus > 0 && active < seuil) {
+                const enQuarantaine = Array.from(this.failedBots.keys())
+                    .filter(email => this.isBlacklisted(email)).length;
                 sendAlert(
                     'low-active-bots',
                     '🔴 Nombre de bots actifs trop bas',
-                    `**${active}/${total}** bot(s) actif(s) — seuil d'alerte: ${minActive}.\nVérifie les credentials Fortnite ou une éventuelle panne Epic.`,
+                    `**${active}/${attendus}** bot(s) actif(s) — seuil : ${seuil} (${pourcentMin}%).\n`
+                    + `${enQuarantaine} bot(s) en attente de nouvelle tentative.\n`
+                    + `Reprise automatique en cours (15 min, puis délai doublé). `
+                    + `Si ça ne remonte pas : panne Epic ou device auth expirés.`,
                     'critical'
                 );
             }

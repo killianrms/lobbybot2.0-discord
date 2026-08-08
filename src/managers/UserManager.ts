@@ -240,6 +240,34 @@ export class UserManager {
         }
     }
 
+    /**
+     * Retire UN ami du compte Epic de l'utilisateur (celui connecté via /login).
+     *
+     * Ne touche pas aux lobby bots : avant, /remove parcourait toute la flotte,
+     * tous propriétaires confondus, et retirait la personne des bots de chacun.
+     */
+    public async removeFriend(discordId: string, targetPseudo: string): Promise<string> {
+        const user = await this.db.getUser(discordId);
+        if (!user) return 'NOT_LOGGED_IN';
+
+        try {
+            const userClient = new Client({ auth: { deviceAuth: user.deviceAuth } });
+            await userClient.login();
+            try {
+                const friend = userClient.friend.list.find((f: any) =>
+                    f.displayName?.toLowerCase() === targetPseudo.toLowerCase());
+                if (!friend) return 'NOT_FRIENDS';
+                await (friend as any).remove();
+                return 'SUCCESS';
+            } finally {
+                await userClient.logout();
+            }
+        } catch (e: any) {
+            console.error('RemoveFriend Error:', e.message);
+            return 'ERROR';
+        }
+    }
+
     public async getFriends(discordId: string): Promise<string[] | null> {
         const user = await this.db.getUser(discordId);
         if (!user) return null;

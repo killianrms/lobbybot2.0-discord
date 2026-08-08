@@ -78,6 +78,22 @@ export class BotManager {
             console.log(`[${identifier}] 🚀 Lancement du bot...`);
 
             const bot = new Client({
+                // Cache de présences des amis. Par défaut fnbr garde un objet
+                // FriendPresence par ami, à vie (maxLifetime: Infinity,
+                // sweepInterval: 0 → le balayage n'est même pas programmé).
+                // Avec ~693 amis par bot, ça fait des dizaines de milliers
+                // d'objets retenus pour rien : rien ici ne lit friend.presence
+                // ni friend.isJoinable. À 0, STOMP construit toujours la présence
+                // et émet 'friend:presence', mais ne la STOCKE plus (STOMP.js:191)
+                // — et friend.party continue d'être renseigné, donc les
+                // invitations et les rejoins de partie ne changent pas.
+                // Mettre un nombre de secondes > 0 pour réactiver le cache.
+                cacheSettings: {
+                    presences: {
+                        maxLifetime: parseInt(process.env.FNBR_PRESENCE_CACHE_SECONDS || '0', 10),
+                        sweepInterval: 300_000, // ms — fnbr le passe tel quel à setInterval
+                    },
+                },
                 auth: {
                     deviceAuth: account.deviceAuth,
                     authClient: 'fortniteAndroidGameClient',
@@ -937,27 +953,10 @@ export class BotManager {
         return derniereErreur ? 'ERROR' : 'ALREADY_FRIENDS';
     }
 
-    async removeFriend(targetUsername: string): Promise<boolean> {
-        console.log(`[BotManager] Trying to remove friend: ${targetUsername}`);
-
-        let removed = false;
-        const connectedBots = this.getActiveBots().filter(b => b.isConnected && b.client);
-
-        for (const botInstance of connectedBots) {
-            const friend = botInstance.client.friend.list.find((f: any) => f.displayName === targetUsername);
-            if (friend) {
-                try {
-                    await friend.remove();
-                    console.log(`[${botInstance.account.pseudo}] Removed friend ${targetUsername}`);
-                    removed = true;
-                    // Don't break, remove from all bots if present? usually one, but safely check all
-                } catch (e: any) {
-                    console.error(`[${botInstance.account.pseudo}] Failed to remove friend: ${e.message}`);
-                }
-            }
-        }
-        return removed;
-    }
+    // removeFriend() a été retiré : il parcourait TOUTE la flotte, tous
+    // propriétaires confondus, et retirait la personne des bots de chacun.
+    // /remove agit désormais sur le compte Epic de l'appelant
+    // (UserManager.removeFriend) et ne touche plus aux lobby bots.
 
     /**
      * Config effective d'un bot : les réglages de SON propriétaire.

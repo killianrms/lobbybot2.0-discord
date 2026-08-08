@@ -460,9 +460,30 @@ export class BotManager {
     }
 
     /** Nombre de membres de la party autres que le bot lui-même. */
+    /** Les comptes Epic de notre propre flotte. */
+    private ownBotAccountIds(): Set<string> {
+        const ids = new Set<string>();
+        for (const instance of this.bots.values()) {
+            const id = instance.account.deviceAuth?.accountId;
+            if (id) ids.add(id);
+        }
+        return ids;
+    }
+
+    /**
+     * Compte les JOUEURS présents avec le bot — nos propres bots ne comptent pas.
+     *
+     * L'anti-AFK existe pour empêcher un joueur de squatter un lobby. Un bot de
+     * la flotte n'est pas un squatteur : tant qu'on le comptait, un groupe de
+     * plusieurs bots gardait la minuterie armée, et comme deux bots entre eux ne
+     * produisent aucune activité de joueur, le compte à rebours allait au bout et
+     * dissolvait le groupe (vécu le 2026-08-08 : 66.RGPLobbyBot expulse 4.GameBot
+     * cinq minutes après le départ du joueur).
+     */
     private countOtherMembers(bot: Client): number {
         const members: any[] = Array.from((bot as any).party?.members?.values?.() ?? []);
-        return members.filter(m => m.id !== bot.user?.self?.id).length;
+        const nous = this.ownBotAccountIds();
+        return members.filter(m => m.id !== bot.user?.self?.id && !nous.has(m.id)).length;
     }
 
     /**
@@ -525,8 +546,11 @@ export class BotManager {
     private async freeIdleLobby(bot: Client, identifier: string): Promise<void> {
         const party: any = (bot as any).party;
         if (!party) return;
+        // On ne libère le lobby que des JOUEURS : expulser nos propres bots
+        // casserait un groupe monté volontairement.
+        const nous = this.ownBotAccountIds();
         const others: any[] = Array.from(party.members?.values?.() ?? [])
-            .filter((m: any) => m.id !== bot.user?.self?.id);
+            .filter((m: any) => m.id !== bot.user?.self?.id && !nous.has(m.id));
         if (!others.length) return;
 
         const minutes = Math.round(this.exclusiveIdleMs / 60000);

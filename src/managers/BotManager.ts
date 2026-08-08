@@ -32,8 +32,15 @@ export class BotManager {
     // Anti-troll/AFK : un joueur qui occupe un bot sans aucune activité (commande,
     // changement de skin/emote…) pendant EXCLUSIVE_IDLE_MINUTES est kick et le
     // lobby rouvre. Toute activité réinitialise le compte à rebours.
-    private exclusiveIdleMs: number = Math.max(1, parseInt(process.env.EXCLUSIVE_IDLE_MINUTES || '5', 10)) * 60_000;
+    // EXCLUSIVE_IDLE_MINUTES=0 DÉSACTIVE le kick : un joueur peut rester avec le
+    // bot indéfiniment. C'est le réglage voulu ici — un bot qui reste 24 h avec
+    // quelqu'un affiche le code créateur tout ce temps, c'est de la publicité,
+    // pas une nuisance.
+    private exclusiveIdleMs: number = Math.max(0, parseInt(process.env.EXCLUSIVE_IDLE_MINUTES || '0', 10)) * 60_000;
     private idleTimers: Map<string, NodeJS.Timeout> = new Map();
+
+    // Danse jouée quand un joueur rejoint le lobby (vide = aucune).
+    private joinEmote: string = process.env.JOIN_EMOTE ?? 'Scenario';
 
     // Global config (managed from admin dashboard) — sert de DÉFAUT pour les
     // owners qui n'ont pas de réglages propres dans owner_settings.
@@ -310,6 +317,16 @@ export class BotManager {
                     console.error(`[${identifier}] ❌ Échec message de lobby: ${e.message}`);
                 }
             }
+            // Danse d'accueil. Après le loadout (qui repart d'un meta vierge et
+            // écraserait l'emote) et sans bloquer le reste si elle échoue.
+            if (this.joinEmote) {
+                try {
+                    await this.cosmeticsActions.setEmote(bot, this.joinEmote);
+                    console.log(`[${identifier}] 💃 Danse d'accueil : ${this.joinEmote}`);
+                } catch (e: any) {
+                    console.error(`[${identifier}] ❌ Danse d'accueil (${this.joinEmote}): ${e.message}`);
+                }
+            }
             // Un joueur est là : verrouiller le lobby (privé)
             await this.updateExclusivity(bot, identifier);
         });
@@ -518,6 +535,7 @@ export class BotManager {
     }
 
     private armIdleTimer(bot: Client, instance: any, identifier: string): void {
+        if (this.exclusiveIdleMs <= 0) return; // kick AFK désactivé
         this.clearIdleTimer(instance.account.email);
         this.idleTimers.set(instance.account.email, setTimeout(() => {
             this.idleTimers.delete(instance.account.email);

@@ -673,6 +673,12 @@ export class BotManager {
                 if (await this.launchBot(account)) launched++;
             }
         }
+        // Un import peut amener un propriétaire encore inconnu : on lui donne ses
+        // propres réglages tout de suite, sinon ses bots héritent de la config
+        // globale (donc du code créateur d'un autre) jusqu'à sa 1re sauvegarde.
+        if (launched > 0 && await this.ensureOwnerSettings() > 0) {
+            await this.refreshOwnerSettings();
+        }
         return launched;
     }
 
@@ -953,7 +959,16 @@ export class BotManager {
         return removed;
     }
 
-    /** Config effective d'un bot : réglages de son owner, sinon config globale. */
+    /**
+     * Config effective d'un bot : les réglages de SON propriétaire.
+     *
+     * Le repli sur la config globale n'a lieu que si le propriétaire n'a pas
+     * encore de ligne owner_settings — et c'est précisément ce repli qui a fait
+     * fuiter le code créateur de Killian sur les bots d'Aurélien le 2026-08-07 :
+     * ses deux premiers bots se sont connectés deux minutes avant qu'il
+     * n'enregistre ses propres réglages. `ensureOwnerSettings()` matérialise
+     * désormais une ligne par propriétaire pour que ce repli ne serve jamais.
+     */
     public cfgFor(account: BotAccount): { status: string; joinMsg: string; addMsg: string } {
         const s = account.ownerDiscordId ? this.ownerSettings.get(account.ownerDiscordId) : undefined;
         return {
@@ -963,17 +978,63 @@ export class BotManager {
         };
     }
 
+    /** Le propriétaire de ce bot a-t-il ses propres réglages ? (sinon : repli global) */
+    private hasOwnSettings(account: BotAccount): boolean {
+        return !!(account.ownerDiscordId && this.ownerSettings.has(account.ownerDiscordId));
+    }
+
+    /**
+     * Donne une ligne owner_settings à tout propriétaire qui possède des bots
+     * mais n'en a pas encore, en la remplissant avec la config globale actuelle.
+     * Sans ça, ses bots portent la config d'autrui jusqu'à sa première sauvegarde.
+     */
+    public async ensureOwnerSettings(): Promise<number> {
+        const owners = new Set<string>();
+        for (const instance of this.bots.values()) {
+            if (instance.account.ownerDiscordId) owners.add(instance.account.ownerDiscordId);
+        }
+        let created = 0;
+        for (const ownerId of owners) {
+            if (this.ownerSettings.has(ownerId)) continue;
+            await this.dbManager.saveOwnerSettings({
+                ownerDiscordId: ownerId,
+                status: this.globalStatus,
+                joinMsg: this.joinMsg,
+                addMsg: this.addMsg,
+            });
+            console.log(`[BotManager] ⚙️ owner_settings créés pour ${ownerId} (évite l'héritage d'un autre owner)`);
+            created++;
+        }
+        if (created > 0) {
+            const all = await this.dbManager.getAllOwnerSettings();
+            this.ownerSettings = new Map(all.map(s => [s.ownerDiscordId, s]));
+        }
+        return created;
+    }
+
     /** (Re)charge owner_settings depuis la base et réapplique les statuts. */
     public async refreshOwnerSettings(): Promise<void> {
         try {
             const all = await this.dbManager.getAllOwnerSettings();
             this.ownerSettings = new Map(all.map(s => [s.ownerDiscordId, s]));
+
+            // Compte-rendu par propriétaire : sans ça, une fuite de config entre
+            // owners restait invisible dans les logs (le statut était réappliqué
+            // silencieusement) et ne se voyait qu'en jeu, des heures plus tard.
+            const parOwner = new Map<string, number>();
+            let orphelins = 0;
             for (const instance of this.bots.values()) {
-                if (instance.isConnected && instance.client) {
-                    try { instance.client.setStatus(this.cfgFor(instance.account).status); } catch (e) {}
+                if (!instance.isConnected || !instance.client) continue;
+                const cfg = this.cfgFor(instance.account);
+                try { instance.client.setStatus(cfg.status); } catch (e) {}
+                if (this.hasOwnSettings(instance.account)) {
+                    parOwner.set(cfg.status, (parOwner.get(cfg.status) || 0) + 1);
+                } else {
+                    orphelins++;
                 }
             }
-            console.log(`[BotManager] ⚙️ owner_settings chargés (${all.length} owner(s))`);
+            const detail = Array.from(parOwner.entries()).map(([s, n]) => `${n}×"${s}"`).join(', ');
+            console.log(`[BotManager] ⚙️ owner_settings chargés (${all.length} owner(s)) — statuts appliqués : ${detail || 'aucun'}${orphelins ? ` ; ${orphelins} bot(s) sans réglages propres (repli global)` : ''}`);
         } catch (e: any) {
             console.error('[BotManager] refreshOwnerSettings:', e.message);
         }

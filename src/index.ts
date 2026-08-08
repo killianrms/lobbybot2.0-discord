@@ -66,6 +66,9 @@ async function main() {
     // 2. Start Services
     await botManager.refreshOwnerSettings(); // config par owner AVANT le lancement des bots
     await botManager.launchAllBots();
+    // Chaque propriétaire doit avoir SES réglages : sans ligne à lui, ses bots
+    // portent la config globale — donc le code créateur d'un autre.
+    if (await botManager.ensureOwnerSettings() > 0) await botManager.refreshOwnerSettings();
 
     // Sync dashboard after all bots are up, then every 30s
     socketManager.sendLogin();

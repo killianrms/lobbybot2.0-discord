@@ -37,16 +37,24 @@ export async function sendEOSPresence(client: Client): Promise<void> {
         EOS_Lobby: JSON.stringify({ version: 3 }),
     };
 
+    // Le texte affiché EN JEU. Il doit partir dans TOUS les cas, party ou non :
+    // sans party, l'ancien payload n'envoyait aucun `activity`, donc Epic gardait
+    // le dernier texte publié. Un bot qui changeait de propriétaire ou dont le
+    // propriétaire changeait son code continuait d'afficher l'ancien code in-game
+    // alors que le launcher (XMPP) montrait le bon — c'est le « launcher Aeroz /
+    // en jeu RGP » constaté le 2026-08-07.
+    const statusText = c.config.defaultStatus
+        || (party ? `Lobby - ${party.size} / ${party.maxSize}` : 'Playing Battle Royale');
+
     let payload: any;
     if (!party) {
         payload = {
             status: 'online',
+            activity: { value: statusText },
             props: baseProps,
             conn: { props: {} },
         };
     } else {
-        const statusText = c.config.defaultStatus
-            || `Lobby - ${party.size} / ${party.maxSize}`;
         const islandCode = party.playlist?.linkId?.mnemonic
             || party.playlist?.playlistName
             || '';
